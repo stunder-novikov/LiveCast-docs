@@ -1,0 +1,28 @@
+# GitHub Pages configuration for the LiveCast documentation site.
+#
+# The theme is one GitHub hosts itself and is pinned to a tag, so nothing here needs installing and
+# nothing moves under us. `_layouts/default.html` is our own copy of that theme's layout with the
+# "View on GitHub" button removed; because the theme is pinned, keeping a copy costs no updates.
+
+title: LiveCast
+description: Broadcast an Unreal Engine game to Twitch, YouTube or any RTMP server — from inside the engine, without OBS.
+
+remote_theme: pages-themes/cayman@v0.2.0
+
+plugins:
+  - jekyll-remote-theme
+  # Named explicitly because our own layout calls {% seo %}. Pages provides the plugin either way,
+  # but the layout that depends on it is ours now, so the dependency is written down rather than
+  # inherited by luck.
+  - jekyll-seo-tag
+
+# index.md is the buyer's documentation and the front page; third-party-licenses.md sits beside it.
+# Both want the theme's layout, and neither carries a `layout:` line of its own.
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+
+# Nothing here is a blog, and there is nothing to download: the plugin comes from Fab.
+show_downloads: false
