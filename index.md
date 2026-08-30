@@ -155,12 +155,19 @@ such things.
 |---|---|
 | `Maps/L_LiveCastExample` | A small scene with the example game mode already attached. Open it and press Play. |
 | `Audio/A_LiveCastAmbient` | The looping backdrop, so a test broadcast proves game audio and voice at the same time. |
-| `Blueprints/BP_LiveCastExampleController` | Starts and stops the broadcast on **F9**, mutes the microphone on **F10**, connects and disconnects chat on **F7**. Set **Chat Channel** on the controller first — it is empty on purpose, so nothing joins a stranger's channel by itself. |
+| `Blueprints/BP_LiveCastExampleController` | Starts and stops the broadcast on **F6**, mutes the microphone on **F10**, connects and disconnects chat on **F7**. Set **Chat Channel** on the controller first — it is empty on purpose, so nothing joins a stranger's channel by itself. |
 | `Blueprints/GM_LiveCastExample` | The game mode that spawns that controller. |
 | `Widgets/WBP_LiveCastStreamHealth` | The on-screen overlay. Redesign it freely — see below. |
 
 Set a stream key first, in *Project Settings → Plugins → LiveCast (this machine)*, then open the map
-and press Play and F9. That is the whole of it.
+and press Play and F6. That is the whole of it.
+
+> The example uses **F6**, **F7** and **F10** because the engine has already claimed the
+> others: `BaseInput.ini` binds F1-F5 to view modes and **F9 to a screenshot**, and F11 to
+> fullscreen. Those bindings are live in every build that is not Shipping. F9 was the
+> broadcast key until 2026-08-30, which meant every press also wrote a full-resolution PNG -
+> a frame hitch at the exact moment a streaming plugin starts streaming.
+
 
 The ambient loop is there for a reason worth knowing: it is tonal and carries a soft marker every
 two seconds, so a listener can hear at once whether audio is arriving and whether it is stuttering —
