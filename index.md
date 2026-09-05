@@ -27,7 +27,6 @@ Start a stream from Blueprint in one node.
 - [Troubleshooting](#troubleshooting)
 - [Limitations](#limitations)
 - [Licensing](#licensing)
-- [Support](#support)
 
 ## Requirements
 
@@ -158,6 +157,7 @@ such things.
 | `Blueprints/BP_LiveCastExampleController` | Starts and stops the broadcast on **F6**, mutes the microphone on **F10**, connects and disconnects chat on **F7**. Set **Chat Channel** on the controller first — it is empty on purpose, so nothing joins a stranger's channel by itself. |
 | `Blueprints/GM_LiveCastExample` | The game mode that spawns that controller. |
 | `Widgets/WBP_LiveCastStreamHealth` | The on-screen overlay. Redesign it freely — see below. |
+| `Widgets/WBP_LiveCastChat` | The chat overlay, new in 1.1. Stays empty until **Chat Channel** is set and F7 connects. Redesignable the same way — see *Reading chat*. |
 
 Set a stream key first, in *Project Settings → Plugins → LiveCast (this machine)*, then open the map
 and press Play and F6. That is the whole of it.
@@ -320,6 +320,18 @@ viewer chose, their badges, and whether they are a moderator, a subscriber or th
 it and add it to the viewport and it works as it is; derive a Blueprint from it to replace the look
 entirely while keeping the behaviour.
 
+What it exposes, whether you use it as it is or derive from it:
+
+| Property | Default | |
+|---|---|---|
+| **Max Lines** | 12 | How many messages stay on screen. The oldest scrolls off. |
+| **Font Size** | 14 | Message text size in the default layout. |
+| **Show Status Line** | on | Prints the channel and how far chat is held back. Worth leaving on while building: a screen with no messages looks identical whether the channel is quiet, the delay is holding everything, or nothing ever connected. |
+| **Replace Unsupported Characters** | on | Replaces characters the font cannot draw. **A memory fix rather than a cosmetic one** — see the note on emoji at the end of this section. |
+| **Unsupported Character Replacement** | `?` | What such a character becomes. Empty removes it instead. Plain `?` on purpose: the replacement itself has to be drawable, and a cleverer choice is exactly the glyph a stripped-down font is also missing. |
+| **Lines** | — | The messages on screen, oldest first, with their text as it arrived. A subclass rebuilds its own layout from this in **On Chat Updated**. |
+| **Make Chat Text Drawable** | — | The same replacement as a function, for a subclass that draws `Lines` itself: the cost is paid by whoever puts the text on screen. |
+
 The rest of the Blueprint surface: **Disconnect Chat**, **Is Chat Connected**, **Get Chat Channel**,
 **Get Pending Chat Count**, **Get Dropped Chat Count**, and the events **On Chat Connected**,
 **On Chat Disconnected**, **On Chat Message Deleted** and **On Chat Error**.
@@ -404,9 +416,15 @@ Three consequences of handing the text over untouched, all of which you will mee
   `Kappa`, or whatever a channel calls it — and Twitch's own client swaps in the image using a
   separate tag that says which characters to replace. LiveCast does not read that tag, so your game
   receives the word.
-- **Unicode emoji arrive intact, but whether they draw is a matter of font.** The example overlay
-  uses the engine's default, which has no emoji glyphs: they come out as empty boxes. Cyrillic and
-  other alphabets are fine.
+- **Unicode emoji arrive intact, and the example overlay replaces the ones its font cannot draw.**
+  The engine's default font has no emoji glyphs. Left alone such a character draws as an empty box
+  *and* makes Slate log a warning every time the line is shaped — once per row per message for a
+  scrolling overlay, about 0.6 KB of memory each that never comes back. Measured on a live channel:
+  180 000 warnings and 102 MB over two hours. So **Replace Unsupported Characters** is on by
+  default and they arrive on screen as `?`. Cyrillic and other alphabets are covered by the font
+  and are untouched. Turn it off if your own font really does cover emoji. Either way your game
+  receives the original text: the replacement happens where the overlay draws, not where the
+  message arrives.
 - **A `/me` message arrives in Twitch's raw form**, `\x01ACTION waves\x01`, control bytes and all.
   Strip that wrapper yourself if you want it drawn as an action.
 
