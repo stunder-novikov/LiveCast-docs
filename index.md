@@ -168,6 +168,18 @@ and press Play and F6. That is the whole of it.
 > broadcast key until 2026-08-30, which meant every press also wrote a full-resolution PNG -
 > a frame hitch at the exact moment a streaming plugin starts streaming.
 
+A **packaged Shipping build** has no console at all, refuses this plugin's console commands as
+cheats, and ignores `-ExecCmds` - the engine compiles that out. So the example takes both things it
+needs from the command line instead, which is the only way to point a Shipping build at a
+destination and a channel:
+
+```
+LiveCastDemo.exe -LiveCastKey=xxxx-xxxx-xxxx -LiveCastChat=somechannel
+```
+
+Then F6 broadcasts and F7 connects chat, exactly as in the editor. A key or channel set on the
+controller wins; the command line is the fallback.
+
 
 The ambient loop is there for a reason worth knowing: it is tonal and carries a soft marker every
 two seconds, so a listener can hear at once whether audio is arriving and whether it is stuttering —
