@@ -1,4 +1,4 @@
-# Third-party licenses
+﻿# Third-party licenses
 
 LiveCast ships one vendored third-party library and otherwise builds against
 system libraries and Unreal Engine modules. Everything here is compatible with
@@ -36,6 +36,16 @@ simple handshake and pulls in no OpenSSL dependency.
 
 The original license file is kept alongside the library at
 `Source/ThirdParty/srs_librtmp/LICENSE`.
+
+**The vendored copy is modified.** One symbol is renamed: `gettimeofday` became
+`srs_gettimeofday`. Windows has no such function, so both this library and
+libwebsockets ship a compatibility shim for it — and chat makes the plugin depend on
+the engine's WebSockets module, which links libwebsockets. A packaged game links
+monolithically, the two definitions meet, and without the rename the game cannot be
+built at all. The rename is applied offline with `llvm-objcopy`; the exact command is
+recorded in `Source/LiveCast/LiveCast.Build.cs` beside the library's paths, so it can
+be reproduced or undone. The MIT licence above permits modification and asks only that
+the notice travel with the code, which it does.
 
 ---
 
