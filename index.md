@@ -157,7 +157,7 @@ such things.
 | `Blueprints/BP_LiveCastExampleController` | Starts and stops the broadcast on **F6**, mutes the microphone on **F10**, connects and disconnects chat on **F7**. Set **Chat Channel** on the controller first — it is empty on purpose, so nothing joins a stranger's channel by itself. |
 | `Blueprints/GM_LiveCastExample` | The game mode that spawns that controller. |
 | `Widgets/WBP_LiveCastStreamHealth` | The on-screen overlay. Redesign it freely — see below. |
-| `Widgets/WBP_LiveCastChat` | The chat overlay, new in 1.1. Stays empty until **Chat Channel** is set and F7 connects. Redesignable the same way — see *Reading chat*. |
+| `Widgets/WBP_LiveCastChat` | The chat overlay, new in 1.1; draws channel events as well since 1.2. Stays empty until **Chat Channel** is set and F7 connects. Redesignable the same way — see *Reading chat*. |
 
 Set a stream key first, in *Project Settings → Plugins → LiveCast (this machine)*, then open the map
 and press Play and F6. That is the whole of it.
@@ -244,8 +244,8 @@ field and pass the rest through.
 | **Disconnect Chat** | Stops reading. Held messages are discarded rather than released. |
 | **Is Chat Connected** | True once the channel was actually joined, not merely once the socket opened. |
 | **Get Chat Channel** | The channel being read, lowercase and without `#`. Empty when not connected. |
-| **Get Pending Chat Count** | How many messages are waiting out the broadcast delay. Worth showing on a debug overlay: it explains a screen that looks frozen while the stream is fine. |
-| **Get Dropped Chat Count** | Messages discarded because the hold queue filled up. Rising means a raid, not a fault. It does not count messages lost when a connection drops. |
+| **Get Pending Chat Count** | How many messages and channel events are waiting out the broadcast delay. Worth showing on a debug overlay: it explains a screen that looks frozen while the stream is fine. |
+| **Get Dropped Chat Count** | Messages and events discarded because the hold queue filled up. Rising means a raid, not a fault. It does not count what is lost when a connection drops. |
 
 ### Stream settings
 
@@ -255,7 +255,7 @@ field and pass the rest through.
 | **Bitrate Kbps** | 4000 | 500–20000 |
 | **Framerate** | 30 | 10–120 |
 | **Sync Chat To Stream Delay** | on | Hold each chat message for the broadcast delay, so it appears beside the picture the audience is watching. Off hands messages over the moment they arrive. |
-| **Max Queued Chat Messages** | 500 | 16–10000. How many may wait out the delay; past that the oldest are discarded and counted. |
+| **Max Queued Chat Messages** | 500 | 16–10000. How many may wait out the delay, channel events included; past that the oldest are discarded and counted. |
 | **Resolution** | 1280×720 | The encoded size. Leave at zero to stream the window as it is. |
 | **Delay Seconds** | 0 | Holds the broadcast behind the game, up to 300 s. See *Delay* below. |
 | **Capture Microphone** | false | Mixes the default input device into the broadcast. Decided at start. |
@@ -271,7 +271,8 @@ field and pass the rest through.
 | **On Reconnected** | The connection came back. |
 | **On Stream Error** (error, message) | Something failed. The typed error says what. |
 | **On Chat Message** (message) | A viewer said something, and it is due to be shown. With a delay configured this fires when the audience reaches that moment, not when the line arrived. |
-| **On Chat Message Deleted** (id) | A message already shown has been withdrawn — deleted by a moderator, or its author banned. Take that line off screen. A message deleted while still held never fires this, because it was never shown. |
+| **On Chat Message Deleted** (id) | A message or event already shown has been withdrawn — deleted by a moderator, or its author banned. Take that line off screen. Anything deleted while still held never fires this, because it was never shown. |
+| **On Chat Event** (event) | The channel did something — a subscription, a gift, a raid, a cheer, an announcement, a milestone. Delivered in order with the messages around it. See *Channel events*. |
 | **On Chat Connected** | The channel was joined and messages can now arrive. |
 | **On Chat Disconnected** | Chat ended, whether asked for or not. A reconnect in progress raises this once, not per attempt. |
 | **On Chat Error** (error, message) | Chat failed, or an attempt to reconnect failed. There is no attempt limit, so treat it as a status rather than something final. |
@@ -315,7 +316,8 @@ question a level meter exists to answer.
 
 ## Reading chat
 
-New in 1.1. LiveCast can read a Twitch channel's chat and hand each message to your game.
+New in 1.1. LiveCast can read a Twitch channel's chat and hand each message to your game. New in 1.2:
+what the channel *does* as well — subscriptions, gifts, raids, cheers — see *Channel events*.
 
 **No account, no token, nothing to keep secret.** Twitch allows an anonymous read-only connection and
 that is what this uses: the client logs in as `justinfan<random>` with no password. You never
@@ -328,6 +330,13 @@ Call **Connect Chat** with a channel name; the `#` is optional and case does not
 Message** then fires for each line, carrying the text, the display name, the login, the colour the
 viewer chose, their badges, and whether they are a moderator, a subscriber or the broadcaster.
 
+A `/me` message arrives as its words with **Is Action** set. Twitch sends it wrapped in control bytes
+(`\x01ACTION waves\x01`); LiveCast takes the wrapper off, so a game that ignores the flag still shows
+the right text and only loses the styling. Twitch's own clients draw an action without the colon and
+in the author's colour, and the example overlay does the same, in italics. Worth handling if a channel
+runs a bot: announcement bots use `/me`, and 688 of 344 673 recorded messages were actions. Before 1.2
+the wrapper reached your game untouched.
+
 `WBP_LiveCastChat` in the plugin's example content is a working overlay built on those events. Create
 it and add it to the viewport and it works as it is; derive a Blueprint from it to replace the look
 entirely while keeping the behaviour.
@@ -336,7 +345,7 @@ What it exposes, whether you use it as it is or derive from it:
 
 | Property | Default | |
 |---|---|---|
-| **Max Lines** | 12 | How many messages stay on screen. The oldest scrolls off. |
+| **Max Lines** | 12 | How many lines stay on screen. The oldest scrolls off. A channel event takes one, or two when the viewer typed something with it. |
 | **Font Size** | 14 | Message text size in the default layout. |
 | **Show Status Line** | on | Prints the channel and how far chat is held back. Worth leaving on while building: a screen with no messages looks identical whether the channel is quiet, the delay is holding everything, or nothing ever connected. |
 | **Replace Unsupported Characters** | on | Replaces characters the font cannot draw. **A memory fix rather than a cosmetic one** — see the note on emoji at the end of this section. |
@@ -346,10 +355,91 @@ What it exposes, whether you use it as it is or derive from it:
 
 The rest of the Blueprint surface: **Disconnect Chat**, **Is Chat Connected**, **Get Chat Channel**,
 **Get Pending Chat Count**, **Get Dropped Chat Count**, and the events **On Chat Connected**,
-**On Chat Disconnected**, **On Chat Message Deleted** and **On Chat Error**.
+**On Chat Disconnected**, **On Chat Message Deleted**, **On Chat Event** and **On Chat Error**.
 
 In a development build the console does the same: `LiveCast.Chat.Join <channel>` while a game is
 running. Console commands are development-only — they are refused in a Shipping build.
+
+### Channel events
+
+**On Chat Event** fires when the channel does something, as opposed to somebody saying something.
+It comes over the same anonymous connection, so there is nothing more to set up, and it waits out the
+broadcast delay **in the same queue as the messages**: a gift sub is celebrated at the moment your
+audience sees it, in its place among the lines around it, not seconds early.
+
+Checked live: ten minutes on a busy channel, with a separate recorder listening alongside. All 29
+channel events Twitch sent in that window reached the example overlay — matched one by one by id,
+none missing and none extra — and the 58 cheers arrived as events too.
+
+Switch on **Type**:
+
+| Type | What happened | Filled in |
+|---|---|---|
+| **Subscription** | A new subscription, a renewal, or an upgrade from Prime or from a gift | Months (not sent with an upgrade), Sub Tier, Is Prime, Streak Months (only when the viewer chose to share it) |
+| **Subscription Gift** | One subscription given to one named viewer | Recipient Display Name, Recipient User Id, Gift Count (1), Sub Tier, Gift Bomb Id |
+| **Gift Bomb** | Several subscriptions bought at once, not yet handed out | Gift Count, Sub Tier, Gift Bomb Id |
+| **Raid** | Another channel arrived with its audience | Raid Viewers; Display Name is the raider |
+| **Announcement** | The broadcaster or a moderator posted an announcement | Text holds the words |
+| **Milestone** | A channel milestone, such as a viewer's watch streak | Category (`watch-streak`), Milestone Value |
+| **Cheer** | Bits cheered | Bits, Text |
+| **Unknown** | Something this version does not name | Kind, System Message |
+
+Every event also carries **Kind** (Twitch's own id: `sub`, `resub`, `raid`, `viewermilestone`…),
+**System Message**, **Display Name**, **User Name**, **User Id**, **Text** (anything the viewer typed
+with it, usually empty), **Message Id** and **Sent At**.
+
+**Draw System Message.** Twitch writes that sentence itself, in the channel's language, for every
+kind — including kinds Twitch adds after this plugin shipped, which arrive as Unknown with the
+sentence intact. That is the case this is built for: six hours recorded across 18 channels were
+dominated by a kind this feature was not first designed around, `viewermilestone`, 1 344 times, and
+turned up `modiversary` once. The same recording found the two cases where the sentence is not
+enough on its own:
+
+- **An announcement carries no sentence at all.** The words a moderator announced are in Text; showing
+  System Message alone puts a blank line on screen every time a channel announces anything.
+- **A `modiversary` leaves the name out** ("has been a moderator for 78 months!"). Display Name is
+  filled in; putting it in front is your call, because for every other kind that would say the name
+  twice.
+
+Four things that will otherwise surprise you:
+
+- **A gift bomb arrives twice.** Twitch announces the batch as one Gift Bomb, then names each recipient
+  in a Subscription Gift of its own — five gifts are six events. Every one of them carries the same
+  **Gift Bomb Id**; a gift given on its own has none. Adding up Gift Count over both counts nearly
+  everything twice: of 574 gifted subscriptions in the recording, 560 came out of one of 98 bombs, and
+  every one arrived after its bomb. Count every Gift Bomb, and count a Subscription Gift unless you
+  have seen the bomb its Gift Bomb Id names. "Count only gifts with no id" sounds the same and is
+  not: a bomb can go missing — chat joined halfway through it, the hold queue overflowed in a raid, a
+  reconnect dropped what was held — and its gifts would then count for nothing.
+- **A cheer is a message and an event.** Bits come on an ordinary chat message, so **On Chat Message**
+  fires for it exactly as before, and then **On Chat Event** with Type Cheer and the same Message Id.
+  Show the words from one and celebrate from the other — handling both the same way shows them twice.
+  A cheer a moderator deletes while it is still held raises neither.
+- **Sub Tier is 1, 2 or 3 — and 0 whenever no paid tier was named.** That covers Prime, which costs
+  the viewer nothing and is deliberately not tier 1, so a game rewarding generosity does not pay the
+  same for it as for a bought subscription. But it also covers a viewer continuing a gifted
+  subscription (`giftpaidupgrade`), which Twitch sends with no plan at all. **Is Prime** is the only
+  way to tell Prime apart.
+- **A hidden gifter is `ananonymousgifter`.** That is the User Name on an anonymous gift, and Display
+  Name is `AnAnonymousGifter`. Twitch is not consistent about hiding it: a single anonymous gift's
+  sentence says "An anonymous user gifted…", but an anonymous gift bomb's opens with the placeholder
+  itself — "AnAnonymousGifter is gifting 5 Tier 1 Subs…". The example overlay replaces it with Twitch's
+  own "An anonymous user"; do the same, and never credit it to a person. 24 recorded gifts and bombs
+  were anonymous.
+
+**How much of it there is:** 4 461 events in those six hours against 344 673 messages — about one event
+per 77 messages — most of them renewals (1 903) and watch streaks (1 344). Raids are rare, three in
+six hours, which is exactly why they are worth making a fuss of.
+
+Deletions, bans and timeouts reach events the way they reach messages: removing the viewer who raised
+an event, or deleting the notice itself, withdraws it whether it is still held or already shown, and
+**On Chat Message Deleted** names its Message Id. The deletion of a notice is handled and tested but
+has not been seen on a real channel — none of the 41 recorded deletions targeted one.
+
+**The example overlay** draws each event as a line with no author — nobody said it — using System
+Message, with the name put in front only when Twitch left it out, and whatever the viewer typed on a
+line of its own underneath, the way Twitch's own chat shows a resub. It does not draw cheers: the
+message carrying the bits is already on screen.
 
 ### Chat in step with the picture
 
@@ -381,16 +471,16 @@ message on screen the moment it was posted and can only take it down afterwards.
 A message already shown can still be withdrawn: **On Chat Message Deleted** carries its id so you can
 take that line off screen. A ban or a timeout reaches backwards over both halves — everything that
 user has in flight is dropped, and everything of theirs among the last few hundred messages shown is
-withdrawn, one id at a time. The remembered window is 256 messages, so a deletion older than that
-finds nothing.
+withdrawn, one id at a time. The remembered window is 256 lines, messages and events together, so a
+deletion older than that finds nothing.
 
 Measured on a live channel: over two hours, 42 bans withdrew 516 already-shown messages, the largest
 single ban taking back 68.
 
 ### When chat stops
 
-**Held messages are dropped, not flushed.** If the connection drops, if Twitch asks the client to
-move, or if you disconnect, whatever was waiting is discarded. This is deliberate: those messages
+**Held messages and events are dropped, not flushed.** If the connection drops, if Twitch asks the
+client to move, or if you disconnect, whatever was waiting is discarded. This is deliberate: those lines
 exist to appear beside a particular picture, and by the time chat is back their moment has passed.
 Releasing them would dump a minute of backlog into the game at once, which reads as a bug.
 
@@ -405,10 +495,10 @@ one.
 
 ### Load
 
-`Max Queued Chat Messages` (default 500) bounds how many messages may wait out the delay. Past that
-the **oldest** are discarded and counted — during a raid the recent lines are the ones you are
-reacting to. **Get Dropped Chat Count** reports the running total; note it counts only messages lost
-to a full queue, not those discarded when a connection drops.
+`Max Queued Chat Messages` (default 500) bounds how many messages and events may wait out the delay.
+Past that the **oldest** are discarded and counted — during a raid the recent lines are the ones you
+are reacting to. **Get Dropped Chat Count** reports the running total; note it counts only what was
+lost to a full queue, not what was discarded when a connection dropped.
 
 That limit is also what bounds the worst frame *inside LiveCast*. Measured: 10 000 messages through
 the parser and the queue in 31 ms, and the largest possible single-frame release — the whole
@@ -417,12 +507,13 @@ the parser and the queue in 31 ms, and the largest possible single-frame release
 
 ### What is deliberately not here
 
-No sending, no channel points, no follower or subscriber events, no emote images, and no filtering.
-Message text is handed to your game exactly as it arrived and drawn as plain text; what to show is
-your decision, and the badges and moderator flags are there to decide with. A filter that fails is
-worse than no filter.
+No sending, no emote images, and no filtering. No follows and no channel-point redemptions either:
+Twitch does not send follows to an anonymous chat connection at all, and a redemption shows up only
+when its reward asks the viewer for text — and then as an ordinary message. Message text is handed to
+your game exactly as it arrived and drawn as plain text; what to show is your decision, and the badges
+and moderator flags are there to decide with. A filter that fails is worse than no filter.
 
-Three consequences of handing the text over untouched, all of which you will meet on a real channel:
+Two consequences of handing the text over untouched, both of which you will meet on a real channel:
 
 - **A Twitch emote arrives as its code, not as a picture.** On the wire an emote is ordinary text —
   `Kappa`, or whatever a channel calls it — and Twitch's own client swaps in the image using a
@@ -437,8 +528,6 @@ Three consequences of handing the text over untouched, all of which you will mee
   and are untouched. Turn it off if your own font really does cover emoji. Either way your game
   receives the original text: the replacement happens where the overlay draws, not where the
   message arrives.
-- **A `/me` message arrives in Twitch's raw form**, `\x01ACTION waves\x01`, control bytes and all.
-  Strip that wrapper yourself if you want it drawn as an action.
 
 ## How it behaves
 
@@ -600,10 +689,89 @@ LiveCast.Chat.Join <channel>     read a channel through the subsystem, so Bluepr
 LiveCast.Chat.Leave              stop that chat
 LiveCast.Chat.DropConnection [s] break the chat connection as the network would, now or in N
                                  seconds, and let the reconnect run
+LiveCast.Chat.Inject <per second> [wide glyphs 0/1]
+                                 feed the overlay synthetic messages at a fixed rate, no network;
+                                 rate 0 stops. For load, not for looks — see below
+LiveCast.Chat.Replay <file|folder> [speed] [channel]
+                                 replay a recording of real chat into the overlay, with no network
+                                 and no channel; `stop` ends it. See below
+LiveCast.After <seconds> <command>
+                                 run another console command later. `-ExecCmds` fires everything at
+                                 startup, which is the wrong moment for most of what is worth
+                                 watching: chat cannot be broken on the frame it connects, and a
+                                 screenshot taken before anything arrives shows an empty overlay
 LiveCast.Settings                print what Project Settings currently says
 LiveCast.TestUrl "rtmp://…"      show how an ingest URL and a key are joined, without connecting
 LiveCast.SelfTest "rtmp://…"     a scripted ten-minute broadcast; see below
 ```
+
+### Driving chat without a channel
+
+Two commands put chat on your overlay with nothing connected. They answer different questions and
+are not interchangeable.
+
+**`LiveCast.Chat.Inject <per second>`** generates messages at a rate you choose. Use it for load:
+how does your layout behave at fifty messages a second, does your game still hold its frame rate,
+does anything grow that should not. The second argument widens the character repertoire — without
+it every message is English words the font has already cached, which measures almost nothing, and
+that mistake cost a real measurement here.
+
+What it cannot do is look like chat. The text is generated, the names are `Viewer1`, and deletions
+are not modelled at all — a moderator's deletion names the id of a message that really arrived, and
+nothing synthetic can produce one.
+
+**`LiveCast.Chat.Replay <file>`** plays back a recording of a real channel instead. Same overlay,
+same parser, same queue, same Blueprint events — the socket is the only thing missing. So a
+subscription arrives where a subscription arrived, a deletion lands on the message it landed on, and
+the text is what people actually typed, in the scripts they actually type in.
+
+```
+LiveCast.Chat.Replay D:/captures/chat-20260907-20.jsonl          as recorded
+LiveCast.Chat.Replay D:/captures 30 illojuan                     a folder, 30× speed, one channel
+LiveCast.Chat.Replay stop
+```
+
+- A folder plays its `.jsonl` files in name order, so an hour-per-file recording runs end to end.
+- **Speed** multiplies the recorded pacing. At 1 it is real time.
+- **Channel** keeps only that channel's lines. A recording usually holds several at once, and
+  replaying all of them into one overlay produces something no viewer has ever seen.
+- Lines are retargeted onto whatever channel the game is on, so the recording need not be of yours.
+- **Only what the channel said and did is replayed**: messages, channel events, deletions and bans.
+  A recording also holds the recorder's own conversation with the server — its login, the join
+  confirmation, keepalives, notices, a server `RECONNECT` — and none of that is played: a replayed
+  join confirmation would tell your chat it had joined a channel it never connected to. Those lines
+  are counted in the summary as skipped.
+- **A broadcast delay is honoured.** With `LiveCast.DelaySeconds` set, replayed lines wait it out
+  and a deletion can land while its message is still held — which is the configuration worth
+  replaying most, and until 1.2 the one where a replay showed nothing at all.
+
+**No channel is needed and no network is touched**, which is the point: it runs behind a firewall,
+it runs in CI, and it runs identically twice. That last one matters more than it sounds — a
+measurement paced by how busy somebody else's channel happened to be cannot be compared with the one
+before it.
+
+### The recording format
+
+One JSON object per line, UTF-8, written in arrival order:
+
+```json
+{"t": 1788800923.251, "line": "@badge-info=…;display-name=… :a!a@a.tmi.twitch.tv PRIVMSG #chan :hi"}
+```
+
+`t` is seconds since 1970 and only the differences matter. `line` is the raw IRC line exactly as it
+came off the wire. A line whose bytes were not valid UTF-8 is written as `{"t": …, "b64": "…"}`
+instead and skipped on replay — a recording that quietly mangles text would be worse than none.
+
+Anything that can write that file will do. The recorder used to build this plugin's own test
+material is `Scripts/CaptureChat.py` in the example project — standard-library Python, no
+dependencies, anonymous read-only, and deliberately not built on this plugin's parser, because a
+recording made by the code it is used to test proves nothing.
+
+**One limit worth knowing before you make a timing claim from a recording:** the timestamp is taken
+once per network read — up to 64 KB, which can hold a backlog — and written onto every line that read
+returned; in the six-hour recording up to 44 lines share one reading. Order is exact; spacing inside a
+read is not recorded and replays as simultaneous. Over minutes this is invisible. Inside a raid it is
+not.
 
 ### `LiveCast.SelfTest`
 
@@ -663,9 +831,9 @@ in other PIE modes the only window holding the game is the editor frame itself.
 - RTMP only — no SRT, no WebRTC.
 - The encoded resolution is fixed for the duration of a broadcast.
 - One broadcast at a time.
-- Chat is Twitch only, read-only and anonymous. No sending, no channel points, no follower or
-  subscriber events, no emote images — an emote arrives as its code word — and no filtering. A
-  withdrawal reaches only the last 256 messages shown.
+- Chat is Twitch only, read-only and anonymous. No sending, no follows, no channel-point redemptions,
+  no emote images — an emote arrives as its code word — and no filtering. A withdrawal reaches only
+  the last 256 messages and events shown.
 
 ---
 
