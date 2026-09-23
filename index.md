@@ -107,6 +107,34 @@ including 10-bit HDR ones.
 2. Restart the editor. Enable **LiveCast** under *Edit → Plugins → Media* if it is not on already.
 3. That is all. Nothing about your project has to change for LiveCast to work.
 
+### Upgrading from 1.1
+
+Nothing is renamed: every Blueprint node, event, struct field, enum value and settings key from 1.1
+is still there with the same meaning, so saved Blueprints and `DefaultGame.ini` load unchanged. What
+a 1.1 game may notice is behaviour:
+
+- **Channel events are new** — **On Chat Event**. They wait in the same queue as messages, so
+  **Get Pending Chat Count**, **Get Dropped Chat Count** and **Max Queued Chat Messages** count them
+  too, and a ban or a deletion can name an event's id.
+- **The example overlay draws events**, so a subclass drawing **Lines** itself now finds event rows in
+  it: **Is Channel Event** set, no author. A resub with words adds a second row with the viewer's name;
+  both share one id.
+- **`/me` arrives unwrapped**, without `\x01ACTION …\x01`, with **Is Action** set. A game that stripped
+  the wrapper itself should read the flag instead.
+- **A cheer** raises **On Chat Message** and then **On Chat Event** (Type Cheer, same id).
+- **The broadcast delay ends with the broadcast** that set it, and what chat was still holding is
+  dropped. In 1.1 it stayed in force after Stop Stream.
+- **Connect Chat for the channel already joined returns true**, with no error. **Bad Request** now
+  means only "a different channel while connected".
+- **A rejoin Twitch is slow to confirm is retried** (Connection Lost) instead of being abandoned as a
+  bad name (Channel Rejected), if that channel was joined earlier in the session.
+- **Chinese, Japanese and Korean now draw** in the example overlay instead of turning into `?`; emoji
+  still do. **Make Chat Text Drawable** now also works in a subclass that has no default layout.
+- **Lines deleted while the overlay is hidden stay deleted** when it is shown again.
+- **The hold is timed on the wall clock**, like the picture's delay, not on the engine's frame time.
+- **Log lines changed**: "leaving #x after N message(s)" and "session ended" now also count events;
+  the per-frame "releasing" line became one "released N item(s)" line at most every ten seconds.
+
 ---
 
 ## Project settings
@@ -287,7 +315,7 @@ Stream With Key** does.
 | **On Chat Message Deleted** (id) | A message or event already shown has been withdrawn — deleted by a moderator, or its author banned. Take that line off screen. Anything deleted while still held never fires this, because it was never shown. |
 | **On Chat Event** (event) | The channel did something — a subscription, a gift, a raid, a cheer, an announcement, a milestone. Delivered in order with the messages around it. See *Channel events*. |
 | **On Chat Connected** | The channel was joined and messages can now arrive. |
-| **On Chat Disconnected** | Chat ended, whether asked for or not. A reconnect in progress raises this once, not per attempt. |
+| **On Chat Disconnected** | Chat ended, whether asked for or not. A reconnect in progress raises this once, not per attempt. Not raised while the game itself is shutting down. |
 | **On Chat Error** (error, message) | Chat failed, or an attempt to reconnect failed. Connection Failed and Connection Lost are retried with no attempt limit — treat them as a status. **Channel Rejected is final**: nothing retries it. See *Chat error values*. |
 
 Events are delivered on the game thread, so it is safe to touch UI directly from them.
@@ -488,9 +516,12 @@ Three things to know before relying on it:
 
 - **The hold follows the broadcast.** **Start Stream** applies the delay and the broadcast ending
   clears it — by Stop Stream, an error, or the game closing — so after a stop chat arrives live again.
-  Setting `Delay Seconds` in Project Settings and then connecting chat without streaming holds nothing.
-  The one way to hold chat with no broadcast is to ask for it: **Set Stream Delay** called while
-  nothing is streaming sets the hold until the next broadcast starts or stops.
+  What was still held at that moment is **dropped, not released**: its picture never went out, and
+  handing it over at once would be a burst of up to 500 lines in one frame. Setting `Delay Seconds`
+  in Project Settings and then connecting chat without streaming holds nothing. The one way to hold
+  chat with no broadcast is to ask for it: **Set Stream Delay** called while nothing is streaming
+  sets the hold until the next broadcast starts or stops. Only a delay your game set is cleared this
+  way; one typed at the console or kept in an ini (`LiveCast.DelaySeconds`) stays until changed.
 - **`Sync Chat To Stream Delay` turns it off.** On by default; with it off, chat is handed over the
   moment it arrives.
 - **Your platform's own latency is not compensated and cannot be.** Twitch's ingest, transcode and
@@ -516,8 +547,8 @@ single ban taking back 68.
 ### When chat stops
 
 **Held messages and events are dropped, not flushed.** If the connection drops, if Twitch asks the
-client to move, if you disconnect, or if a moderator clears the whole chat (`/clear`), whatever was
-waiting is discarded. This is deliberate: those lines
+client to move, if you disconnect, if a moderator clears the whole chat (`/clear`), or if the delay
+ends because the broadcast did, whatever was waiting is discarded. This is deliberate: those lines
 exist to appear beside a particular picture, and by the time chat is back their moment has passed.
 Releasing them would dump a minute of backlog into the game at once, which reads as a bug.
 
@@ -525,8 +556,11 @@ A dropped connection reconnects on its own, backing off 1, 2, 4, 8 and then 12 s
 trying for as long as chat is connected — **there is no attempt limit**. Every failed attempt raises
 **On Chat Error**, so treat that event as a status to display rather than a fault to give up on.
 Reconnecting yourself from **On Chat Disconnected** or **On Chat Error** is safe: asking for the
-channel already being joined simply returns true, and the automatic retry stands down when it finds
-a connection you made.
+channel already being joined simply returns true, the automatic retry stands down when it finds a
+connection you made, and a Connect Chat made from the handler of an error that Connect Chat itself
+raised — a name that is not a channel, a connection refused on the spot — is ignored rather than
+repeated (a bad name stays bad; a refused connection is already being retried). A Connect Chat made
+from inside **On Chat Message** or **On Chat Event** opens its connection on the next frame.
 
 Twitch's own `RECONNECT` request — sent before it restarts a server — closes the socket at once and
 opens a new one after the first step of the backoff, a second later, on Twitch's schedule rather
