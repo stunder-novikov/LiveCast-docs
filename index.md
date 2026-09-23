@@ -35,7 +35,7 @@ Start a stream from Blueprint in one node.
 | Engine | Unreal Engine 5.8 |
 | Platform | Windows 64-bit |
 | GPU | NVIDIA with NVENC, or AMD with AMF |
-| Network | An RTMP ingest URL and stream key |
+| Network | An RTMP ingest URL and stream key. Reading chat also opens an outbound secure WebSocket to `irc-ws.chat.twitch.tv:443` |
 
 Intel QuickSync is not available: Unreal's codec layer ships no QuickSync video encoder on Windows.
 
@@ -85,9 +85,10 @@ be refused. And its **backup ingest (`b.rtmp.youtube.com`) will not accept a con
 refuses at the RTMP handshake, whether or not a primary broadcast is live. That address is meant for
 two independent encoders sending identical content, which is not what a game does — use the primary.
 
-**RTMPS is not supported — only plain RTMP.** The transport is built without OpenSSL on purpose:
+**RTMPS is not supported — only plain RTMP.** The RTMP transport is built without OpenSSL on purpose:
 encryption would drag a licence tail into a plugin that is sold, and every platform above accepts
-unencrypted RTMP. One platform does not: **Facebook Live requires RTMPS**, so broadcast to it
+unencrypted RTMP. (Chat is a different path: it uses the engine's own WebSockets module, whose TLS
+is the engine's, so reading chat adds no library of ours.) One platform does not: **Facebook Live requires RTMPS**, so broadcast to it
 through a multistreaming service, which accepts RTMP from you and delivers RTMPS onward.
 
 **Unreal Engine 5.8 only.** Earlier engine versions are not supported at release — LiveCast is built
@@ -115,8 +116,16 @@ looks like: server address, bitrate, framerate, encoded size, delay, microphone,
 encoder to prefer. Games usually have one answer to those questions and many places that start a
 broadcast, so this saves repeating them at every call site.
 
-Everything here is optional. A game that fills in the settings struct itself and calls **Start
-Stream** never has to open this page.
+Most of it is optional: a game that fills in the settings struct itself and calls **Start Stream**
+takes its address, size, rate and delay from that struct. Four settings live only here, because they
+are about the project rather than one broadcast, and every start reads them:
+
+| Setting | Default | |
+|---|---|---|
+| **Adaptive Bitrate** | on | Lower the bitrate when the uplink cannot keep up, and restore it afterwards. |
+| **Encoder** | Automatic | Which hardware encoder to prefer: Automatic, NVIDIA, AMD, or the engine's default. |
+| **Sync Chat To Stream Delay** | on | Hold each chat message and channel event for the broadcast delay, so it appears beside the picture the audience is watching. Off hands them over the moment they arrive. |
+| **Max Queued Chat Messages** | 500 | 16–10000. How many messages and events may wait out the delay; past that the oldest are discarded and counted. |
 
 > **If you write `DefaultGame.ini` by hand — a build script, a per-platform override — put the ingest
 > URL in quotes:**
@@ -154,7 +163,8 @@ such things.
 |---|---|
 | `Maps/L_LiveCastExample` | A small scene with the example game mode already attached. Open it and press Play. |
 | `Audio/A_LiveCastAmbient` | The looping backdrop, so a test broadcast proves game audio and voice at the same time. |
-| `Blueprints/BP_LiveCastExampleController` | Starts and stops the broadcast on **F6**, mutes the microphone on **F10**, connects and disconnects chat on **F7**. Set **Chat Channel** on the controller first — it is empty on purpose, so nothing joins a stranger's channel by itself. |
+| `Audio/A_LiveCastJump` | A short sound on **Space**. Someone watching the stream can tell at once whether a sharp noise lands with the movement that made it — which a droning loop cannot show. |
+| `Blueprints/BP_LiveCastExampleController` | Starts and stops the broadcast on **F6**, mutes the microphone on **F10**, connects and disconnects chat on **F7**, plays the jump sound on **Space** without taking the jump away from the pawn. Set **Chat Channel** on the controller first — it is empty on purpose, so nothing joins a stranger's channel by itself. |
 | `Blueprints/GM_LiveCastExample` | The game mode that spawns that controller. |
 | `Widgets/WBP_LiveCastStreamHealth` | The on-screen overlay. Redesign it freely — see below. |
 | `Widgets/WBP_LiveCastChat` | The chat overlay, new in 1.1; draws channel events as well since 1.2. Stays empty until **Chat Channel** is set and F7 connects. Redesignable the same way — see *Reading chat*. |
@@ -224,9 +234,12 @@ Pass the player's stream key. Everything else comes from Project Settings. To en
 call **Stop Stream**. If the player quits or the level ends, the stream stops itself.
 
 If you would rather decide everything in Blueprint, **Start Stream** takes a settings struct with
-the full RTMP URL — key included — and ignores the settings page entirely. **Get Default Stream
-Settings** sits between the two: it returns the project's configured values so you can change one
-field and pass the rest through.
+the full RTMP URL — key included — and takes the broadcast's address, size, rate, delay and
+microphone from that struct rather than from the settings page. The four project-wide settings
+listed under *Project settings* still apply. **Get Default Stream Settings** sits between the two:
+it returns the project's configured values so you can change one field and pass the rest through,
+and **Make Stream URL** builds the address from the configured server and a key exactly as **Start
+Stream With Key** does.
 
 ### Blueprint nodes
 
@@ -234,13 +247,15 @@ field and pass the rest through.
 |---|---|
 | **Start Stream With Key** (key) | Begins broadcasting using Project Settings, with this key appended to the configured server. In the editor an empty key falls back to *LiveCast (this machine)*. |
 | **Get Default Stream Settings** | The project's configured settings, with an empty URL — change a field and pass it to **Start Stream**. |
+| **Make Stream URL** (key) | The configured server with this key appended — the address **Start Stream With Key** would use. Empty if the key is empty or the server is not an `rtmp://` address. |
 | **Start Stream** (settings) | Begins broadcasting. Returns false only if it could not start at all; a connection that fails later reports through **On Stream Error**. |
 | **Stop Stream** | Ends the broadcast and closes the connection. |
 | **Is Streaming** | Whether a broadcast is running. |
 | **Get Stream Stats** | A snapshot for a stream-health widget. See below. |
-| **Set Stream Delay** (seconds) | Changes the anti-sniping delay while live. |
+| **Set Stream Delay** (seconds) | Changes the anti-sniping delay while live. Chat follows it. Called with no broadcast running it still sets the delay chat is held by, until the next broadcast starts or stops. |
 | **Set Microphone Gain** (gain) | Changes microphone loudness while live. Zero is mute. |
-| **Connect Chat** (channel) | Starts reading a Twitch channel. The `#` is optional, case is ignored. Returns false only for a request that cannot be attempted — an empty name, or chat already connected. |
+| **Owns Running Stream** | Whether this game instance started the running broadcast (or nobody did — one started from the console). False only when another game instance in the same process owns it, which in practice means multiplayer testing in the editor. |
+| **Connect Chat** (channel) | Starts reading a Twitch channel. The `#` is optional, case is ignored. Asking again for the channel already joined or joining returns true and does nothing. Returns false for a request that cannot be attempted: a name that is not a Twitch login (empty, over 25 characters, anything but letters, digits and `_` — a pasted channel address is recognised and trimmed), a different channel while chat is connected, or a WebSocket the engine could not create. Each raises **On Chat Error** saying which. |
 | **Disconnect Chat** | Stops reading. Held messages are discarded rather than released. |
 | **Is Chat Connected** | True once the channel was actually joined, not merely once the socket opened. |
 | **Get Chat Channel** | The channel being read, lowercase and without `#`. Empty when not connected. |
@@ -254,8 +269,6 @@ field and pass the rest through.
 | **URL** | — | Full RTMP URL including the stream key, e.g. `rtmp://host/app/xxxx-xxxx` |
 | **Bitrate Kbps** | 4000 | 500–20000 |
 | **Framerate** | 30 | 10–120 |
-| **Sync Chat To Stream Delay** | on | Hold each chat message for the broadcast delay, so it appears beside the picture the audience is watching. Off hands messages over the moment they arrive. |
-| **Max Queued Chat Messages** | 500 | 16–10000. How many may wait out the delay, channel events included; past that the oldest are discarded and counted. |
 | **Resolution** | 1280×720 | The encoded size. Leave at zero to stream the window as it is. |
 | **Delay Seconds** | 0 | Holds the broadcast behind the game, up to 300 s. See *Delay* below. |
 | **Capture Microphone** | false | Mixes the default input device into the broadcast. Decided at start. |
@@ -275,7 +288,7 @@ field and pass the rest through.
 | **On Chat Event** (event) | The channel did something — a subscription, a gift, a raid, a cheer, an announcement, a milestone. Delivered in order with the messages around it. See *Channel events*. |
 | **On Chat Connected** | The channel was joined and messages can now arrive. |
 | **On Chat Disconnected** | Chat ended, whether asked for or not. A reconnect in progress raises this once, not per attempt. |
-| **On Chat Error** (error, message) | Chat failed, or an attempt to reconnect failed. There is no attempt limit, so treat it as a status rather than something final. |
+| **On Chat Error** (error, message) | Chat failed, or an attempt to reconnect failed. Connection Failed and Connection Lost are retried with no attempt limit — treat them as a status. **Channel Rejected is final**: nothing retries it. See *Chat error values*. |
 
 Events are delivered on the game thread, so it is safe to touch UI directly from them.
 
@@ -291,15 +304,29 @@ like a live broadcast.
 | **Connection Lost** | The connection dropped and could not be restored within the retry budget. |
 | **Encoder Unavailable** | No hardware encoder accepted the requested configuration. |
 | **No Game World** | Streaming was requested while no game world was running. |
+| **Already Streaming** | A broadcast is already running. LiveCast captures one at a time per process, which you meet when testing a multiplayer game in the editor with more than one client: each has its own subsystem and they share one capture. |
 
 A failure *before* the first successful connection reports **Connection Refused** — that is the
 "check your key" case. A failure *after* it reports **Connection Lost**.
+
+### Chat error values
+
+| Value | Meaning | Retried? |
+|---|---|---|
+| **Bad Request** | Chat was asked to connect to a different channel while already connected. Disconnect first. | No — it is an answer to the call |
+| **Connection Failed** | The WebSocket never opened: no network, or Twitch refused the handshake. | Yes, backing off to 12 s |
+| **Connection Lost** | An open connection closed, or a rejoin went unconfirmed for 10 s. | Yes, backing off to 12 s |
+| **Channel Rejected** | The channel itself is the problem: a name that is not a Twitch login, a channel Twitch refused, or a name Twitch never confirmed within 10 s on the first attempt. | **No — final.** Fix the name and connect again |
+
+A channel that was joined once in a session is never rejected later for a slow confirmation: that is
+Twitch or the network having a bad moment, and it is retried as a lost connection.
 
 ### Stream stats
 
 **Get Stream Stats** returns: `Is Streaming`, `Is Connected`, `Elapsed Seconds`,
 `Frames Per Second`, `Frames Encoded`, `Frames Dropped`, `Reconnect Count`, `Buffered Megabytes`,
-`Bitrate Kbps`, `Uplink Backlog Seconds`, `Microphone Level`, `Microphone Active`.
+`Bitrate Kbps`, `Requested Bitrate Kbps`, `Uplink Backlog Seconds`, `Microphone Level`,
+`Microphone Active`, `Microphone Gain`.
 
 Two of these deserve a widget of their own:
 
@@ -350,8 +377,8 @@ What it exposes, whether you use it as it is or derive from it:
 | **Show Status Line** | on | Prints the channel and how far chat is held back. Worth leaving on while building: a screen with no messages looks identical whether the channel is quiet, the delay is holding everything, or nothing ever connected. |
 | **Replace Unsupported Characters** | on | Replaces characters the font cannot draw. **A memory fix rather than a cosmetic one** — see the note on emoji at the end of this section. |
 | **Unsupported Character Replacement** | `?` | What such a character becomes. Empty removes it instead. Plain `?` on purpose: the replacement itself has to be drawable, and a cleverer choice is exactly the glyph a stripped-down font is also missing. |
-| **Lines** | — | The messages on screen, oldest first, with their text as it arrived. A subclass rebuilds its own layout from this in **On Chat Updated**. |
-| **Make Chat Text Drawable** | — | The same replacement as a function, for a subclass that draws `Lines` itself: the cost is paid by whoever puts the text on screen. |
+| **Lines** | — | The lines on screen, oldest first, with their text as it arrived: messages, and channel events drawn as text. An event line has **Is Channel Event** set and no author — draw it without a name. A subclass rebuilds its own layout from this in **On Chat Updated**, which also fires when chat connects or disconnects. Lines a moderator withdraws leave it even while the overlay is hidden. |
+| **Make Chat Text Drawable** | — | The same replacement as a function, for a subclass that draws `Lines` itself: the cost is paid by whoever puts the text on screen. In such a subclass it asks the engine's default text font. |
 
 The rest of the Blueprint surface: **Disconnect Chat**, **Is Chat Connected**, **Get Chat Channel**,
 **Get Pending Chat Count**, **Get Dropped Chat Count**, and the events **On Chat Connected**,
@@ -369,7 +396,9 @@ audience sees it, in its place among the lines around it, not seconds early.
 
 Checked live: ten minutes on a busy channel, with a separate recorder listening alongside. All 29
 channel events Twitch sent in that window reached the example overlay — matched one by one by id,
-none missing and none extra — and the 58 cheers arrived as events too.
+none missing and none extra — and the 58 cheers arrived as events too. That run had no delay. A
+second ten-minute run, on another channel with a 10-second delay, held every one of its 7 events and
+drew each 10.3–10.4 s after Twitch sent it: the delay plus the network.
 
 Switch on **Type**:
 
@@ -390,10 +419,10 @@ with it, usually empty), **Message Id** and **Sent At**.
 
 **Draw System Message.** Twitch writes that sentence itself, in the channel's language, for every
 kind — including kinds Twitch adds after this plugin shipped, which arrive as Unknown with the
-sentence intact. That is the case this is built for: six hours recorded across 18 channels were
-dominated by a kind this feature was not first designed around, `viewermilestone`, 1 344 times, and
-turned up `modiversary` once. The same recording found the two cases where the sentence is not
-enough on its own:
+sentence intact. That is the case this is built for: in six hours recorded across 18 channels the
+second most common kind, `viewermilestone` (1 344 times, after 1 903 renewals), was one this feature
+was not first designed around, and `modiversary` turned up once. The same recording found the two
+cases where the sentence is not enough on its own:
 
 - **An announcement carries no sentence at all.** The words a moderator announced are in Text; showing
   System Message alone puts a blank line on screen every time a channel announces anything.
@@ -420,16 +449,19 @@ Four things that will otherwise surprise you:
   same for it as for a bought subscription. But it also covers a viewer continuing a gifted
   subscription (`giftpaidupgrade`), which Twitch sends with no plan at all. **Is Prime** is the only
   way to tell Prime apart.
-- **A hidden gifter is `ananonymousgifter`.** That is the User Name on an anonymous gift, and Display
-  Name is `AnAnonymousGifter`. Twitch is not consistent about hiding it: a single anonymous gift's
-  sentence says "An anonymous user gifted…", but an anonymous gift bomb's opens with the placeholder
-  itself — "AnAnonymousGifter is gifting 5 Tier 1 Subs…". The example overlay replaces it with Twitch's
-  own "An anonymous user"; do the same, and never credit it to a person. 24 recorded gifts and bombs
-  were anonymous.
+- **A hidden gifter has Is Anonymous set.** Twitch names a placeholder account then — User Name
+  `ananonymousgifter`, Display Name `AnAnonymousGifter` — and every anonymous gift shares its User Id,
+  so a leaderboard keyed on it would credit one fake viewer with all of them. Twitch is not consistent
+  about hiding it in the sentence either: a single anonymous gift says "An anonymous user gifted…",
+  but an anonymous gift bomb opens with the placeholder itself — "AnAnonymousGifter is gifting 5 Tier
+  1 Subs…". The example overlay replaces it with Twitch's own "An anonymous user". 24 recorded gifts
+  and bombs were anonymous, all of them ordinary `subgift` and `submysterygift`; the `anon…` kinds
+  Twitch documents never appeared.
 
-**How much of it there is:** 4 461 events in those six hours against 344 673 messages — about one event
-per 77 messages — most of them renewals (1 903) and watch streaks (1 344). Raids are rare, three in
-six hours, which is exactly why they are worth making a fuss of.
+**How much of it there is:** 4 461 channel notices in those six hours against 344 673 messages — one
+per 77 messages — most of them renewals (1 903) and watch streaks (1 344). Counting the 116 cheers,
+which are events too, **On Chat Event** would have fired 4 577 times. Raids are rare, three in six
+hours, which is exactly why they are worth making a fuss of.
 
 Deletions, bans and timeouts reach events the way they reach messages: removing the viewer who raised
 an event, or deleting the notice itself, withdraws it whether it is still held or already shown, and
@@ -447,14 +479,18 @@ Chat reaches you live, but your viewers are watching a picture that is `Delay Se
 message posted "now" is a reaction to something your audience has not seen yet, and an in-game
 response to it runs ahead of them.
 
-LiveCast owns both sides, so it holds each message for the delay you configured and releases it on
-the first frame after that delay has elapsed. Change the delay mid-broadcast and the hold follows.
+LiveCast owns both sides, so it holds each message and event for the delay you configured and
+releases it on the first frame after that delay has elapsed, timed on the wall clock as the picture's
+delay is — a game whose frame time the engine clamps does not stretch it. Change the delay
+mid-broadcast and the hold follows.
 
 Three things to know before relying on it:
 
-- **The hold follows a running broadcast.** It is applied by **Start Stream** and by **Set Stream
-  Delay**. Setting `Delay Seconds` in Project Settings and then connecting chat without streaming
-  holds nothing.
+- **The hold follows the broadcast.** **Start Stream** applies the delay and the broadcast ending
+  clears it — by Stop Stream, an error, or the game closing — so after a stop chat arrives live again.
+  Setting `Delay Seconds` in Project Settings and then connecting chat without streaming holds nothing.
+  The one way to hold chat with no broadcast is to ask for it: **Set Stream Delay** called while
+  nothing is streaming sets the hold until the next broadcast starts or stops.
 - **`Sync Chat To Stream Delay` turns it off.** On by default; with it off, chat is handed over the
   moment it arrives.
 - **Your platform's own latency is not compensated and cannot be.** Twitch's ingest, transcode and
@@ -480,16 +516,21 @@ single ban taking back 68.
 ### When chat stops
 
 **Held messages and events are dropped, not flushed.** If the connection drops, if Twitch asks the
-client to move, or if you disconnect, whatever was waiting is discarded. This is deliberate: those lines
+client to move, if you disconnect, or if a moderator clears the whole chat (`/clear`), whatever was
+waiting is discarded. This is deliberate: those lines
 exist to appear beside a particular picture, and by the time chat is back their moment has passed.
 Releasing them would dump a minute of backlog into the game at once, which reads as a bug.
 
 A dropped connection reconnects on its own, backing off 1, 2, 4, 8 and then 12 seconds, and keeps
 trying for as long as chat is connected — **there is no attempt limit**. Every failed attempt raises
 **On Chat Error**, so treat that event as a status to display rather than a fault to give up on.
+Reconnecting yourself from **On Chat Disconnected** or **On Chat Error** is safe: asking for the
+channel already being joined simply returns true, and the automatic retry stands down when it finds
+a connection you made.
 
 Twitch's own `RECONNECT` request — sent before it restarts a server — closes the socket at once and
-opens a new one, on Twitch's schedule rather than after an unpredictable hang-up. It raises **On Chat
+opens a new one after the first step of the backoff, a second later, on Twitch's schedule rather
+than after an unpredictable hang-up. It raises **On Chat
 Disconnected** and takes held messages with it, and it is not reported as an error, because it is not
 one.
 
@@ -500,9 +541,10 @@ Past that the **oldest** are discarded and counted — during a raid the recent 
 are reacting to. **Get Dropped Chat Count** reports the running total; note it counts only what was
 lost to a full queue, not what was discarded when a connection dropped.
 
-That limit is also what bounds the worst frame *inside LiveCast*. Measured: 10 000 messages through
-the parser and the queue in 31 ms, and the largest possible single-frame release — the whole
-500-message queue at once — costs 0.14 ms in the queue itself. What your own overlay then does with
+That limit is also what bounds the worst frame *inside LiveCast*. Measured on 1.2, which parses
+channel events and `/me` as well: 10 000 messages through the parser and the queue in 43–47 ms over
+three runs, and the largest possible single-frame release — the whole 500-message queue at once —
+costs about 0.2 ms in the queue itself. What your own overlay then does with
 500 messages is your cost, not that figure. A busy channel is a few messages a second.
 
 ### What is deliberately not here
@@ -524,8 +566,11 @@ Two consequences of handing the text over untouched, both of which you will meet
   *and* makes Slate log a warning every time the line is shaped — once per row per message for a
   scrolling overlay, about 0.6 KB of memory each that never comes back. Measured on a live channel:
   180 000 warnings and 102 MB over two hours. So **Replace Unsupported Characters** is on by
-  default and they arrive on screen as `?`. Cyrillic and other alphabets are covered by the font
-  and are untouched. Turn it off if your own font really does cover emoji. Either way your game
+  default and they arrive on screen as `?`. Everything the font family can draw is untouched —
+  Cyrillic and the other alphabets, and Chinese, Japanese and Korean, which the engine font draws
+  through its fallback typeface without a warning. (Until 1.2 those were replaced too: the check
+  asked the main typeface only. Seen on screen replaying recorded lines, and fixed.) Turn it off if
+  your own font really does cover emoji. Either way your game
   receives the original text: the replacement happens where the overlay draws, not where the
   message arrives.
 
@@ -576,7 +621,8 @@ at once, not after a minute of silent attempts.
 ### Delay buffer (anti stream-sniping)
 
 `Delay Seconds` holds the broadcast behind the game so viewers cannot watch your screen in real
-time. It buffers **encoded** packets, so 15 seconds costs about 5 MB — not gigabytes of frames.
+time. It buffers **encoded** packets, so 15 seconds at the default 4000 kbps costs about 7.5 MB —
+not gigabytes of frames.
 Audio and video share one queue and stay in step. It can be changed mid-broadcast with
 **Set Stream Delay**; raising it stretches the buffer, lowering it lets the buffer drain, and
 neither interrupts the stream.
@@ -667,7 +713,10 @@ separately from real drops, so a rising **Frames Dropped** is the number that ma
 
 Useful while building your game. **Development builds only** — every command below is registered as
 a cheat, so a Shipping build refuses it even if something in your game reaches the console
-programmatically. Settings changed from C++ or Blueprint are unaffected.
+programmatically. The `LiveCast.<Name> <value>` lines without a verb — `DelaySeconds`, `Microphone`,
+`MicrophoneGain`, `AdaptiveBitrate`, `ThrottleKbps`, `MirrorToFile`, `ForceEncoder` — are console
+*variables*, not commands: they exist in every build, because the Blueprint functions and Project
+Settings work by writing them.
 
 ```
 LiveCast.Stream "rtmp://host/app/key" [kbps] [fps] [width] [height]
@@ -682,11 +731,15 @@ LiveCast.AdaptiveBitrate 0       hold the configured bitrate whatever the uplink
 LiveCast.ThrottleKbps 1200       pretend the uplink is this slow — watch your UI react; 0 removes it
 LiveCast.DropConnection          force a reconnect, to test your UI
 LiveCast.MirrorToFile 1          keep a copy of the broadcast on disk (diagnostic)
-LiveCast.ForceEncoder nvenc      auto | nvenc | amf | default — amf is written but unverified
+LiveCast.ForceEncoder nvenc      auto | nvenc | amf | default — amf verified on one Radeon card,
+                                 see Requirements
 
 LiveCast.Chat.Join <channel>     read a channel through the subsystem, so Blueprint events and
                                  chat widgets see it; needs a running game
-LiveCast.Chat.Leave              stop that chat
+LiveCast.Chat.Leave              stop that chat, and any replay feeding it
+LiveCast.Chat.Connect <channel>  a separate, console-only chat that prints messages to the log and
+LiveCast.Chat.Status             reaches no Blueprint event and no widget - for checking a channel
+LiveCast.Chat.Disconnect         with no game running. Chat.Join is the one your game sees
 LiveCast.Chat.DropConnection [s] break the chat connection as the network would, now or in N
                                  seconds, and let the reconnect run
 LiveCast.Chat.Inject <per second> [wide glyphs 0/1]
@@ -746,9 +799,10 @@ LiveCast.Chat.Replay stop
   replaying most, and until 1.2 the one where a replay showed nothing at all.
 
 **No channel is needed and no network is touched**, which is the point: it runs behind a firewall,
-it runs in CI, and it runs identically twice. That last one matters more than it sounds — a
-measurement paced by how busy somebody else's channel happened to be cannot be compared with the one
-before it.
+it runs in CI, and it plays the same lines in the same order every time. That last one matters more
+than it sounds — a measurement paced by how busy somebody else's channel happened to be cannot be
+compared with the one before it. The pacing follows your frame rate, so which frame a line lands on
+can differ between runs; what arrives, and in what order, does not.
 
 ### The recording format
 
