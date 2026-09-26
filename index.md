@@ -212,7 +212,7 @@ needs from the command line instead, which is the only way to point a Shipping b
 destination and a channel:
 
 ```
-LiveCastDemo.exe -LiveCastKey=xxxx-xxxx-xxxx -LiveCastChat=somechannel
+YourGame.exe -LiveCastKey=xxxx-xxxx-xxxx -LiveCastChat=somechannel
 ```
 
 Then F6 broadcasts and F7 connects chat, exactly as in the editor. A key or channel set on the
@@ -850,10 +850,10 @@ One JSON object per line, UTF-8, written in arrival order:
 came off the wire. A line whose bytes were not valid UTF-8 is written as `{"t": …, "b64": "…"}`
 instead and skipped on replay — a recording that quietly mangles text would be worse than none.
 
-Anything that can write that file will do. The recorder used to build this plugin's own test
-material is `Scripts/CaptureChat.py` in the example project — standard-library Python, no
-dependencies, anonymous read-only, and deliberately not built on this plugin's parser, because a
-recording made by the code it is used to test proves nothing.
+Anything that can write that file will do; no recorder ships with the plugin. The one used to build
+this plugin's own test material is a standard-library Python script — anonymous, read-only,
+and deliberately not built on this plugin's parser, because a recording made by the code it is used
+to test proves nothing. If you write your own, keep that last property.
 
 **One limit worth knowing before you make a timing claim from a recording:** the timestamp is taken
 once per network read — up to 64 KB, which can hold a backlog — and written onto every line that read
