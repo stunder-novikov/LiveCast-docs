@@ -21,6 +21,7 @@ Start a stream from Blueprint in one node.
 - [The example](#the-example)
 - [Quick start](#quick-start)
 - [Reading chat](#reading-chat)
+- [Chat votes](#chat-votes)
 - [How it behaves](#how-it-behaves)
 - [Performance](#performance)
 - [Console commands (development builds)](#console-commands-development-builds)
@@ -107,6 +108,26 @@ including 10-bit HDR ones.
 2. Restart the editor. Enable **LiveCast** under *Edit → Plugins → Media* if it is not on already.
 3. That is all. Nothing about your project has to change for LiveCast to work.
 
+### Upgrading from 1.2
+
+Chat votes are new (see *Chat votes*) and nothing that existed is renamed or changed in meaning. What
+a 1.2 game may notice:
+
+- **The example controller opens a vote on Home**, and the example shows a vote overlay at the top of
+  the screen while one runs. A Blueprint derived from the controller gets both, and the controller's
+  binding takes Home before your pawn or level Blueprint sees it; set **Toggle Vote Key** to none, or
+  **Vote Widget Class** to none, to leave them out.
+- **The example's "ready" log line** names the vote key as well.
+- **The example controller gained members**: `ToggleVote`, `Toggle Vote Key`, `Example Vote`,
+  `Vote Widget Class`, `VoteWidget`, `HandleVoteEnded`, and an `EndPlay` override. A Blueprint or C++
+  class derived from it that already has something by one of those names will not compile until it
+  is renamed. The controller also plays the jump sound when a vote produces a winner.
+- **Chat messages and channel events gain two fields**, **Is From Another Channel** and **Source
+  Channel Id**, for Twitch Shared Chat (see *Shared Chat*). Nothing existing changed meaning: a
+  partner's lines were delivered in 1.2 too, just without saying so.
+- **Project Settings gain a Votes section** — one setting, **Viewer Latency Seconds**, written to
+  `DefaultGame.ini` only if you change it.
+
 ### Upgrading from 1.1
 
 Nothing is renamed: every Blueprint node, event, struct field, enum value and settings key from 1.1
@@ -145,8 +166,9 @@ encoder to prefer. Games usually have one answer to those questions and many pla
 broadcast, so this saves repeating them at every call site.
 
 Most of it is optional: a game that fills in the settings struct itself and calls **Start Stream**
-takes its address, size, rate and delay from that struct. Four settings live only here, because they
-are about the project rather than one broadcast, and every start reads them:
+takes its address, size, rate and delay from that struct. Five settings live only here, because they
+are about the project rather than one broadcast. Every Start Stream reads the first two, chat reads
+the next two, and every Start Vote reads the last:
 
 | Setting | Default | |
 |---|---|---|
@@ -154,6 +176,7 @@ are about the project rather than one broadcast, and every start reads them:
 | **Encoder** | Automatic | Which hardware encoder to prefer: Automatic, NVIDIA, AMD, or the engine's default. |
 | **Sync Chat To Stream Delay** | on | Hold each chat message and channel event for the broadcast delay, so it appears beside the picture the audience is watching. Off hands them over the moment they arrive. |
 | **Max Queued Chat Messages** | 500 | 16–10000. How many messages and events may wait out the delay; past that the oldest are discarded and counted. |
+| **Viewer Latency Seconds** | 6 | 0–60. How far behind live viewers watch, not counting the broadcast delay — the streaming site's own latency. Votes stay open this much longer so viewers get their whole window. See *Chat votes*. |
 
 > **If you write `DefaultGame.ini` by hand — a build script, a per-platform override — put the ingest
 > URL in quotes:**
@@ -192,17 +215,20 @@ such things.
 | `Maps/L_LiveCastExample` | A small scene with the example game mode already attached. Open it and press Play. |
 | `Audio/A_LiveCastAmbient` | The looping backdrop, so a test broadcast proves game audio and voice at the same time. |
 | `Audio/A_LiveCastJump` | A short sound on **Space**. Someone watching the stream can tell at once whether a sharp noise lands with the movement that made it — which a droning loop cannot show. |
-| `Blueprints/BP_LiveCastExampleController` | Starts and stops the broadcast on **F6**, mutes the microphone on **F10**, connects and disconnects chat on **F7**, plays the jump sound on **Space** without taking the jump away from the pawn. Set **Chat Channel** on the controller first — it is empty on purpose, so nothing joins a stranger's channel by itself. |
+| `Blueprints/BP_LiveCastExampleController` | Starts and stops the broadcast on **F6**, mutes the microphone on **F10**, connects and disconnects chat on **F7**, opens and cancels a chat vote on **Home**, plays the jump sound on **Space** without taking the jump away from the pawn. Set **Chat Channel** on the controller first — it is empty on purpose, so nothing joins a stranger's channel by itself. |
 | `Blueprints/GM_LiveCastExample` | The game mode that spawns that controller. |
 | `Widgets/WBP_LiveCastStreamHealth` | The on-screen overlay. Redesign it freely — see below. |
 | `Widgets/WBP_LiveCastChat` | The chat overlay, new in 1.1; draws channel events as well since 1.2. Stays empty until **Chat Channel** is set and F7 connects. Redesignable the same way — see *Reading chat*. |
+| `LiveCast Vote` (C++ class `ULiveCastVoteWidget`, not an asset) | The vote overlay, new in 1.3: the question, a bar per option, the countdown, then the result. Hidden while no vote runs. The controller uses the C++ class directly; derive a Blueprint from it to redesign it — see *Chat votes*. |
 
 Set a stream key first, in *Project Settings → Plugins → LiveCast (this machine)*, then open the map
 and press Play and F6. That is the whole of it.
 
-> The example uses **F6**, **F7** and **F10** because the engine has already claimed the
-> others: `BaseInput.ini` binds F1-F5 to view modes and **F9 to a screenshot**, and F11 to
-> fullscreen. Those bindings are live in every build that is not Shipping. F9 was the
+> The example uses **F6**, **F7**, **F10** and **Home** because the engine has already claimed the
+> other function keys: `BaseInput.ini` binds F1-F5 to view modes and **F9 to a screenshot**, and F11 to
+> fullscreen. Those bindings are live in every build that is not Shipping. During Play In Editor the
+> editor also takes **F8** (Possess or Eject Player) before the game sees it, which is why votes are
+> on Home. On a keyboard with no Home key it is Fn+Left; set **Toggle Vote Key** to anything else. F9 was the
 > broadcast key until 2026-08-30, which meant every press also wrote a full-resolution PNG -
 > a frame hitch at the exact moment a streaming plugin starts streaming.
 
@@ -289,6 +315,11 @@ Stream With Key** does.
 | **Get Chat Channel** | The channel being read, lowercase and without `#`. Empty when not connected. |
 | **Get Pending Chat Count** | How many messages and channel events are waiting out the broadcast delay. Worth showing on a debug overlay: it explains a screen that looks frozen while the stream is fine. |
 | **Get Dropped Chat Count** | Messages and events discarded because the hold queue filled up. Rising means a raid, not a fault. It does not count what is lost when a connection drops. |
+| **Start Vote** (settings) | Opens a chat vote between options the game wrote. Returns the vote's id, or 0 if refused — another vote is running, or the options cannot make a fair vote — with the reason in **Why Refused**. See *Chat votes*. |
+| **Cancel Vote** | Ends the running vote with nothing winning. **On Vote Ended** still fires, as Cancelled. False when nothing was running. |
+| **Is Vote Running** | Whether a vote is open or still counting its last votes. |
+| **Get Vote State** | The running vote for an overlay to draw: options, tallies, voters, the countdown to show, and whether chat is connected at all. |
+| **Get Last Vote Result** | How the most recent vote ended — what **On Vote Ended** carried. Vote Id 0 before the first one. |
 
 ### Stream settings
 
@@ -317,6 +348,9 @@ Stream With Key** does.
 | **On Chat Connected** | The channel was joined and messages can now arrive. |
 | **On Chat Disconnected** | Chat ended, whether asked for or not. A reconnect in progress raises this once, not per attempt. Not raised while the game itself is shutting down. |
 | **On Chat Error** (error, message) | Chat failed, or an attempt to reconnect failed. Connection Failed and Connection Lost are retried with no attempt limit — treat them as a status. **Channel Rejected is final**: nothing retries it. See *Chat error values*. |
+| **On Vote Ended** (result) | A vote is over — won, tied, empty or cancelled. Fires exactly once for every vote **Start Vote** accepted, except one still running when the game shuts down. Act on chat's choice here. |
+| **On Vote Ballot** (ballot) | A viewer's vote was counted: who, and for what. Once per counted vote — a repeat does not raise it. Raised as the message arrives, before any broadcast delay. |
+| **On Vote Ballot Withdrawn** (ballot) | A counted vote stopped counting — its message deleted, or the viewer banned or timed out. Take down whatever you drew for it. |
 
 Events are delivered on the game thread, so it is safe to touch UI directly from them.
 
@@ -544,6 +578,11 @@ deletion older than that finds nothing.
 Measured on a live channel: over two hours, 42 bans withdrew 516 already-shown messages, the largest
 single ban taking back 68.
 
+This covers chat messages and events. **Votes are counted as they arrive, not after the delay**, but
+voters' names are held: the default vote overlay and a result's **Winning Voter Names** name only
+voters whose message has waited out the delay. An overlay of your own that draws names straight from
+**On Vote Ballot** should wait the same way; see *Chat votes*.
+
 ### When chat stops
 
 **Held messages and events are dropped, not flushed.** If the connection drops, if Twitch asks the
@@ -581,6 +620,25 @@ three runs, and the largest possible single-frame release — the whole 500-mess
 costs about 0.2 ms in the queue itself. What your own overlay then does with
 500 messages is your cost, not that figure. A busy channel is a few messages a second.
 
+### Shared Chat
+
+Twitch lets streamers who play together merge their chats for a while. During such a session every
+line and event from the partner's chat also arrives on your channel's connection, and LiveCast hands
+them over like any other — which is what Twitch's own client shows. Each carries **Is From Another
+Channel** and **Source Channel Id**, so your game can tell the two audiences apart.
+
+Check the flag wherever it matters which audience did something. On **On Chat Event** above all: a
+partner's gift sub or raid is relayed here too (mostly as Kind `sharedchatnotice`), and a game that
+celebrates every event celebrates somebody else's subscriber. Votes skip the partner's viewers by
+default — see *Chat votes*. A partner's event arrives with Kind `sharedchatnotice` and Twitch names
+the real kind in another tag, so **Type** is that real kind — a partner's resub is a Subscription with
+its months filled in — and the flag says whose it was.
+
+**Read as documented, not yet seen live.** The flag comes from Twitch's `source-room-id` tag, the real
+kind from `source-msg-id`; no Shared Chat session has been recorded for this plugin, so both are tested
+against the documented shape. How Twitch relays a *deletion or ban* in a partner's chat is not in its
+documentation at all — whether removing a partner's line reaches your copy of it is unverified.
+
 ### What is deliberately not here
 
 No sending, no emote images, and no filtering. No follows and no channel-point redemptions either:
@@ -607,6 +665,216 @@ Two consequences of handing the text over untouched, both of which you will meet
   your own font really does cover emoji. Either way your game
   receives the original text: the replacement happens where the overlay draws, not where the
   message arrives.
+
+## Chat votes
+
+New in 1.3. Let chat choose what happens next — spawn a monster or drop a medkit, go left or right —
+by typing a word. Like reading chat, it needs no account and no token: a vote is counted from the
+same anonymous connection.
+
+**Chat suggests, the game decides, LiveCast counts.** That division is the whole design, and it is
+what lets a vote exist without breaking your game's balance:
+
+- **Your game writes the options**, and decides what each one does. Chat picks *which*, never *what*
+  or *how much*: a monster chosen by three viewers and one chosen by three thousand are the same
+  monster.
+- **Your game decides when to ask.** Open a vote at a moment that suits it — a lull between fights, a
+  fork in the road — and the number of votes you open is the number of times chat gets to intervene,
+  however many people are watching.
+- **Your game acts on the result**, in **On Vote Ended**, and can still say not now: a medkit chat
+  chose while the player is at full health can wait, a monster chosen during a cutscene can come
+  later. Chat voted on a picture that was already seconds old, so check the present before acting.
+- **LiveCast never spawns, heals or changes anything.** It counts, times and reports.
+
+```
+Start Vote (Prompt "What comes next?", Options [monster, medkit], Window Seconds 30)
+    ...
+On Vote Ended (Result)  →  Result.Winning Index ≥ 0 ?  →  yes: make that option happen
+                                                      →  no:  show why, from Result.Outcome
+```
+
+Act on **Winning Index**, not on Outcome alone: a tie (**Decided By Lot**) and a fallback pick
+(**Picked At Random**) have a winner too, and a game that only handles **Decided** drops them.
+
+**Chat must be connected first** — **Connect Chat** to the streamer's own channel. A vote opened
+without it runs, says in red that nobody can vote, and ends with no votes. The example connects on
+F7 once **Chat Channel** is set. And **the overlay is yours to add**: outside the example, create a
+**LiveCast Vote** widget and add it to the viewport, or nothing on screen shows the vote.
+
+**Leave a gap between votes** — at least the latency plus the broadcast delay plus a few seconds after
+a result, if the next vote uses the same keywords. Viewers see the result late and cheer it in chat
+("MONSTER!"), and those lines, typed before anyone saw the next question, would count as first votes
+in a vote that opened too soon.
+
+**A vote runs on the wall clock.** Pausing the game does not pause it: the countdown keeps going and
+the result arrives on time, because viewers' time keeps going too.
+
+### What viewers type
+
+The option's keyword as the **first word** of a message: `monster`, `#monster`, `!Monster`,
+`monster pls` all count; `the monster again?` does not, because a keyword in the middle of a sentence
+is conversation. A Twitch **reply** counts too: its text starts with `@name`, and that one word is
+skipped. Autocorrect's `…`, a Spanish `¡medkit!`, and the fullwidth `！` and digits a Japanese or
+Chinese keyboard types are all read as the plain characters.
+
+**Numbers are off by default.** With **Accept Option Numbers** on, `1` votes for the first option —
+and the default overlay then numbers the options. Off, because a bare "1" or "2" is ordinary chat
+and would quietly tilt every vote towards whatever you listed first. A keyword that is itself a
+number turns them off regardless. Keywords are one word each and must differ from one another, ignoring case — in any
+script: `Монстр` counts for `монстр`, which matters because a phone capitalises the first word.
+Keywords come back in results as they are matched — trimmed of `#`, `!` and trailing punctuation — so
+act on **Winning Index** rather than comparing **Winning Keyword** with your own string.
+
+**One viewer, one vote, and the first one counts.** Votes are counted by Twitch's user id, which
+survives a rename. Typing the keyword forty times is one vote, and so is changing your mind: the
+first stands, so nobody can swing a vote by repeating themselves at the last second.
+
+**What moderators take back stops counting** — however long ago in the vote it was cast. A deleted
+message takes its vote with it, and a viewer banned or timed out loses theirs; **On Vote Ballot
+Withdrawn** says whose. The viewer may vote again after one deleted message, since a deletion is not
+a ban. Once the result is in, it stands: a ban after that does not change it.
+
+**Votes are counted the moment they arrive; names are not shown until the delay is over.** The
+broadcast delay keeps a deleted message from ever being *shown* (see *Moderation*). A vote is counted
+at once — the bars move — but the default overlay waits the broadcast delay before it draws "Dave
+voted monster", exactly as long as Dave's message waits, and a ban or deletion inside that time
+means the name is never drawn. **On Vote Ballot** itself fires at once: a game drawing names from it
+should wait the same way. A **result** names only voters whose message had waited out the delay by
+the time the result came — see *Winning Voter Names* below.
+
+### The window is on the viewers' clock
+
+Viewers watch the stream late — by your broadcast delay, and by however long the streaming site takes
+to deliver the video. A vote opened and closed on the game's clock would be over before most of them
+had seen the question. So LiveCast:
+
+- **Counts a message only once it could be an answer** — from one broadcast delay after the vote
+  opened, because nobody can see it sooner. Anything earlier was typed before the vote existed: late
+  votes for a previous vote, for one. Reactions to a previous *result* arrive later than that — see
+  *Leave a gap between votes* above.
+- **Keeps the vote open until viewers have had the whole window**: the broadcast delay, plus **Viewer
+  Latency Seconds** from Project Settings, plus **Window Seconds**.
+- **Announces the result one second later**, for the last messages to cross the network.
+
+Votes are read as each message **arrives**, not when the chat overlay shows it. Chat waits out the
+broadcast delay before it is shown, and a vote that waited too would lose votes two ways — the
+queue's limit (**Max Queued Chat Messages**) drops the oldest lines first in a burst, and in a vote
+the oldest are people's first votes — and the result would wait out the delay a second time. So with
+a delay configured, a vote is counted and **On Vote Ballot** fires before the line it came from
+reaches the chat overlay.
+
+**Votes typed before the counting starts are ignored without a word in the log**, because there are
+usually many and they are not mistakes. With a broadcast delay set — even one from an ini, with no
+broadcast running — that is the first *delay* seconds of every vote. The "opened" log line says when
+counting starts ("counting from +30.0 s"); look there first when testing with `LiveCast.Vote.Cast`
+seems to count nothing.
+
+The countdown on the vote overlay simply runs from Window Seconds down to zero on the game's clock,
+and that is exact rather than naive: the overlay is part of the picture, so it reaches viewers as
+late as everything else, and reads zero for them when their time is up — provided **Viewer Latency
+Seconds** matches your platform; see below. After zero the overlay says
+**Counting the last votes…** until the result is in: the broadcast delay plus the latency plus one
+second — with the default latency and no delay about seven seconds, with a 30-second delay about 37.
+**Get Vote State** gives you both numbers for your own overlay.
+
+**Viewer Latency Seconds defaults to 6, and that is a cautious guess, not a measurement.** Measure your
+own: put a clock on screen, watch your stream on the site, and subtract, leaving the broadcast delay
+out. Too low cuts off viewers who vote in their last seconds; too high makes the result arrive a little
+later and also accepts votes typed after a viewer's countdown showed zero.
+
+**The delay and the latency are read when the vote opens and kept until it ends.** Changing the
+broadcast delay halfway through cannot move a countdown that has already been broadcast, and does not
+affect which votes count. The delay is the one in force when the vote opens — so **open votes while
+live**: a vote opened just before Start Stream counts its viewers as if there were no delay at all.
+
+**A hitch at the very end does not cost votes.** Messages are timed by when this machine read them,
+and a game that freezes reads them late — so a message read more than a quarter of a second after the
+previous frame is credited to the moment the freeze began (or to the start of counting, if the freeze
+began before it), and the result waits one extra frame after
+it is due so that a long frame's messages are read first. This errs towards counting a vote that
+arrived a little late rather than losing one that was on time.
+
+**Cancelling during "Counting the last votes…" throws those votes away.** **Is Vote Running** stays
+true until the result, so a "cancel" key pressed after the countdown still cancels.
+
+### How a vote ends
+
+Always on time, and always with **On Vote Ended** — whether anybody voted or not, whether chat is even
+connected. A vote that waits for something can hang, and a hung vote on a live stream looks like a
+broken game.
+
+| Outcome | Meaning |
+|---|---|
+| **None** | No vote has ended yet: what **Get Last Vote Result** says before the first. Never carried by **On Vote Ended**. |
+| **Decided** | One option had the most votes. |
+| **Decided By Lot** | Options tied for the most votes and one was drawn at random, each tied option equally likely. Ties are never settled in favour of the first-listed option — that would hand every close vote to whatever you happened to list first. |
+| **No Winner** | Fewer than **Minimum Voters** took part, and **When Too Few Voters** is Skip. |
+| **Picked At Random** | Fewer than Minimum Voters took part, and When Too Few Voters is Pick At Random. |
+| **Cancelled** | **Cancel Vote** was called. |
+
+**Minimum Voters is 1 by default, deliberately.** Most channels are small, and a vote that needs
+three voters in a channel watched by two never resolves. **Skip** is the right fallback for a vote
+that makes something happen — chat staying quiet should not summon a monster — and **Pick At
+Random** for one that chooses between things that will happen anyway, where the show has to go on.
+Either way, say it on screen: "no votes — skipped" reads as a working feature, silence reads as a
+broken one.
+
+**Winning Voter Names** lists who voted for the winning option, earliest first, up to ten — after
+**Picked At Random**, whoever among the few voters had chosen the option drawn — **but only voters
+whose message had already waited out the broadcast delay when the result came.** A name is chat text,
+and chat text reaches the picture only after the delay so a moderator can remove it first; a name in a
+result keeps that rule. Usually it costs nothing, because the earliest voters are the ones named and
+they have waited longest. With a delay as long as the window or longer, few or no names can qualify,
+and the result says "thanks" to nobody — the votes still count. A ban after the result does not
+change it. Use them: the
+monster can wear the first voter's name, the medkit can say who sent it. On a small channel that
+recognition is most of why anybody votes. They are names viewers chose — draw them the way you draw
+chat, through **Make Vote Text Drawable** on the vote overlay if your font may lack their characters.
+
+### The vote overlay
+
+`ULiveCastVoteWidget` (**LiveCast Vote** in the widget palette) draws the question, a bar per option
+with its count, the countdown, then the result for **Result Seconds** with the winner highlighted and
+the first three winning voters thanked. Lines wrap rather than run off the frame. While chat is not
+connected it says so in red, under the countdown — a
+vote nobody can take part in otherwise looks exactly like one nobody wanted to. Viewers' names go
+through the same missing-glyph filter as the chat overlay, so they cannot bring back the warning leak
+described under *What is deliberately not here*; **Show Voter Names** turns the names off, and
+**Replace Unsupported Characters** the filter, for a font that really covers them. A redesigned overlay
+gets the same filter as the **Make Vote Text Drawable** node.
+
+Derive a Blueprint from it to redesign it: as with the other overlays, the default layout is only
+built when the widget tree is empty, and **State**, **Result**, **Showing Result**, **Latest Ballot**
+and **On Vote Updated** keep coming.
+
+### What is deliberately not here
+
+- **One vote at a time.** A second **Start Vote** is refused while one runs.
+- **No effects, budgets or cooldowns.** LiveCast does not know what a monster is, so it cannot know
+  how often one is too often. Your game decides how often it asks.
+- **No veto window.** The result goes straight to your game, which can refuse it — say so on screen
+  when it does. A silent refusal reads as contempt; a visible "the streamer saved that one for the
+  boss" reads as a show.
+- **No weighted votes and no subscriber bonus**, by design: one viewer, one vote. **No channel points
+  and no Twitch polls** — those need a Twitch token, which LiveCast does not use.
+- **No messages back to chat.** Reading is all this plugin does.
+- **Not measured at scale.** The counting rules hold for any number of viewers, and one-vote-per-id
+  is checked against a set, not a list. What has not been run is a vote against a real crowd of
+  thousands, so no number is claimed for it.
+- **Clearing the whole chat does not void votes.** `/clear` is not aimed at anyone; bans and
+  deletions are, and those do.
+- **Votes are chat lines, with everything that brings.**
+  - `!monster` meant as a command for another chat bot also counts as a vote, and lines from bots
+    and from the streamer vote like anyone else's.
+  - The channel's modes apply: in emote-only mode nobody can type a keyword, in subscriber- or
+    follower-only mode only those can vote, and a line AutoMod holds arrives when approved —
+    possibly after the vote has closed.
+  - Lines that arrive while chat is reconnecting are lost, votes among them; the vote still ends on
+    time.
+  - A timeout, however short, voids the viewer's vote, and they may vote again once it ends.
+- **Shared Chat partners do not vote by default.** While two chats are merged, the partner's viewers
+  type into yours but watch somebody else's stream. Set **Count Shared Chat** in the vote settings for
+  a joint event where both audiences decide together. See *Shared Chat*.
 
 ## How it behaves
 
@@ -787,6 +1055,18 @@ LiveCast.After <seconds> <command>
                                  startup, which is the wrong moment for most of what is worth
                                  watching: chat cannot be broken on the frame it connects, and a
                                  screenshot taken before anything arrives shows an empty overlay
+LiveCast.Vote.Start <keyword> <keyword> [...] [window=<seconds>] [random] [numbers]
+                                 open a vote through the subsystem - the overlay, events and log
+                                 are the real ones; `random` picks an option when nobody votes,
+                                 `numbers` counts 1, 2... as votes too
+LiveCast.Vote.Cancel             cancel it
+LiveCast.Vote.Cast <name> <message...>
+                                 say a chat line as a named viewer, through the real chat path, with
+                                 no channel - for trying votes alone. The same name is the same
+                                 viewer, so a second line from it tests that repeats do not count.
+                                 Prints the message id
+LiveCast.Vote.Delete <message id>
+                                 delete that message as a moderator would
 LiveCast.Settings                print what Project Settings currently says
 LiveCast.TestUrl "rtmp://…"      show how an ingest URL and a key are joined, without connecting
 LiveCast.SelfTest "rtmp://…"     a scripted ten-minute broadcast; see below
@@ -922,6 +1202,8 @@ in other PIE modes the only window holding the game is the editor frame itself.
 - Chat is Twitch only, read-only and anonymous. No sending, no follows, no channel-point redemptions,
   no emote images — an emote arrives as its code word — and no filtering. A withdrawal reaches only
   the last 256 messages and events shown.
+- Votes: one at a time, by keyword (or option number, when switched on), counted from chat — no Twitch polls, no channel points, no
+  weighting. Not measured against a crowd of thousands.
 
 ---
 
