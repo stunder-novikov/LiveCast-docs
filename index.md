@@ -108,6 +108,20 @@ including 10-bit HDR ones.
 2. Restart the editor. Enable **LiveCast** under *Edit → Plugins → Media* if it is not on already.
 3. That is all. Nothing about your project has to change for LiveCast to work.
 
+### Upgrading from 1.3
+
+1.3.1 changes documentation and wording only. No behaviour, setting, Blueprint node or event
+changed. What you will notice: the tooltips of **Sync Chat To Stream Delay**, **On Chat Event** and the
+vote overlay's **Latest Ballot**, the plugin's description in the Plugins window, the example chat
+overlay's status line — "held N s for moderation" where it said "held N s to match the stream" — and
+one log line, for held messages dropped on a disconnect.
+
+Earlier versions explained the chat hold as keeping chat "in step with the picture". That was wrong:
+the hold gives moderators the delay to remove a line before it is drawn into the broadcast, and costs
+your game one delay of reaction time. If you left **Sync Chat To Stream Delay** on to make reactions
+line up with the picture, read *Holding chat behind the delay* — for fast reactions to commands, turn
+it off.
+
 ### Upgrading from 1.2
 
 Chat votes are new (see *Chat votes*) and nothing that existed is renamed or changed in meaning. What
@@ -174,7 +188,7 @@ the next two, and every Start Vote reads the last:
 |---|---|---|
 | **Adaptive Bitrate** | on | Lower the bitrate when the uplink cannot keep up, and restore it afterwards. |
 | **Encoder** | Automatic | Which hardware encoder to prefer: Automatic, NVIDIA, AMD, or the engine's default. |
-| **Sync Chat To Stream Delay** | on | Hold each chat message and channel event for the broadcast delay, so it appears beside the picture the audience is watching. Off hands them over the moment they arrive. |
+| **Sync Chat To Stream Delay** | on | Hold each chat message and channel event for the broadcast delay before your game sees it, so moderators have that long to remove a line before it can be drawn into the broadcast. Costs one delay of reaction time; see *Holding chat behind the delay*. Off hands them over the moment they arrive. |
 | **Max Queued Chat Messages** | 500 | 16–10000. How many messages and events may wait out the delay; past that the oldest are discarded and counted. |
 | **Viewer Latency Seconds** | 6 | 0–60. How far behind live viewers watch, not counting the broadcast delay — the streaming site's own latency. Votes stay open this much longer so viewers get their whole window. See *Chat votes*. |
 
@@ -342,7 +356,7 @@ Stream With Key** does.
 | **On Reconnecting** | The connection dropped and is being restored. Show a warning; do not stop. |
 | **On Reconnected** | The connection came back. |
 | **On Stream Error** (error, message) | Something failed. The typed error says what. |
-| **On Chat Message** (message) | A viewer said something, and it is due to be shown. With a delay configured this fires when the audience reaches that moment, not when the line arrived. |
+| **On Chat Message** (message) | A viewer said something, and it is due to be shown. With a delay configured and the hold on, this fires one delay after the line arrived, once moderators have had that long to remove it. |
 | **On Chat Message Deleted** (id) | A message or event already shown has been withdrawn — deleted by a moderator, or its author banned. Take that line off screen. Anything deleted while still held never fires this, because it was never shown. |
 | **On Chat Event** (event) | The channel did something — a subscription, a gift, a raid, a cheer, an announcement, a milestone. Delivered in order with the messages around it. See *Channel events*. |
 | **On Chat Connected** | The channel was joined and messages can now arrive. |
@@ -453,8 +467,10 @@ running. Console commands are development-only — they are refused in a Shippin
 
 **On Chat Event** fires when the channel does something, as opposed to somebody saying something.
 It comes over the same anonymous connection, so there is nothing more to set up, and it waits out the
-broadcast delay **in the same queue as the messages**: a gift sub is celebrated at the moment your
-audience sees it, in its place among the lines around it, not seconds early.
+broadcast delay **in the same queue as the messages**, so it keeps its place among the lines around
+it and a ban or a deletion can still reach it. The wait does not make it land when viewers see it:
+they saw the gift in Twitch's own chat the moment it happened, and the hold only delays your game's
+celebration — see *Holding chat behind the delay*.
 
 Checked live: ten minutes on a busy channel, with a separate recorder listening alongside. All 29
 channel events Twitch sent in that window reached the example overlay — matched one by one by id,
@@ -535,38 +551,63 @@ Message, with the name put in front only when Twitch left it out, and whatever t
 line of its own underneath, the way Twitch's own chat shows a resub. It does not draw cheers: the
 message carrying the bits is already on screen.
 
-### Chat in step with the picture
+### Holding chat behind the delay
 
-Chat reaches you live, but your viewers are watching a picture that is `Delay Seconds` behind. So a
-message posted "now" is a reaction to something your audience has not seen yet, and an in-game
-response to it runs ahead of them.
+Your viewers watch the picture `Delay Seconds` late, and later still by the streaming site's own
+latency. Chat is not delayed at all. So by the time a viewer's message reaches your game, the moment
+it reacts to has already been broadcast and seen.
 
-LiveCast owns both sides, so it holds each message and event for the delay you configured and
-releases it on the first frame after that delay has elapsed, timed on the wall clock as the picture's
-delay is — a game whose frame time the engine clamps does not stretch it. Change the delay
-mid-broadcast and the hold follows.
+With a delay configured, LiveCast holds each message and channel event for that delay before handing
+it to your game, and releases it on the first frame after the delay has elapsed — timed on the wall
+clock as the picture's delay is, so a game whose frame time the engine clamps does not stretch it.
+Change the delay mid-broadcast and the hold follows.
+
+**What the hold buys is moderation, not timing.** Whatever your game draws goes into the broadcast,
+and with a delay, into frames that reach your viewers a delay later. A held line is drawn only after
+moderators have had the whole delay to delete it or ban its author — and if they do, LiveCast never
+hands it over (see *Moderation*; voters' names from **On Vote Ballot** are the exception and arrive at
+once). A browser overlay cannot give moderators that window on its own: it does not know what delay
+you set, or when you change it.
+
+**What it costs is reaction time.** The hold cannot line chat up with the picture — the picture is
+late and chat is not, so nothing can. It makes your game see each line one delay later: a response to
+a viewer's message reaches that viewer twice the delay, plus the site's latency, after they typed,
+where without the hold it would be the delay once plus the latency. Before 1.3.1 this section said
+the opposite, that holding chat kept it "in step with the picture".
+
+Choose by what your game does with chat:
+
+- **It draws viewers' words or names** — a chat overlay, a name over a character: keep the hold. It
+  is what keeps a line deleted within the delay out of the broadcast.
+- **It reacts to commands and speed matters**: turn the hold off with **Sync Chat To Stream Delay**,
+  and lines reach your game the moment they are posted. A deletion can then only withdraw a line
+  already shown — **On Chat Message Deleted** still reports it — and the frames that showed it before
+  the deletion are already on their way to your viewers.
+- **Votes** are unaffected either way: they are counted as messages arrive and timed on the viewers'
+  clock, and voters' names still wait the delay before the default overlay draws them (see *Chat
+  votes*).
 
 Three things to know before relying on it:
 
 - **The hold follows the broadcast.** **Start Stream** applies the delay and the broadcast ending
   clears it — by Stop Stream, an error, or the game closing — so after a stop chat arrives live again.
-  What was still held at that moment is **dropped, not released**: its picture never went out, and
-  handing it over at once would be a burst of up to 500 lines in one frame. Setting `Delay Seconds`
+  What was still held at that moment is **dropped, not released**: the broadcast it was waiting to
+  reach has ended, and handing it over at once would be a burst of up to 500 lines in one frame. Setting `Delay Seconds`
   in Project Settings and then connecting chat without streaming holds nothing. The one way to hold
   chat with no broadcast is to ask for it: **Set Stream Delay** called while nothing is streaming
   sets the hold until the next broadcast starts or stops. Only a delay your game set is cleared this
   way; one typed at the console or kept in an ini (`LiveCast.DelaySeconds`) stays until changed.
 - **`Sync Chat To Stream Delay` turns it off.** On by default; with it off, chat is handed over the
-  moment it arrives.
-- **Your platform's own latency is not compensated and cannot be.** Twitch's ingest, transcode and
-  player buffer add several seconds of their own, and nothing inside an encoder can measure them.
-  With `Delay Seconds` at its default of zero the hold is zero and chat is exactly as far out of step
-  as any browser overlay.
+  moment it arrives. The name is older than this explanation — read it as "hold chat for the delay".
+- **With `Delay Seconds` at its default of zero there is no hold** — no moderation window, and no
+  extra wait. The site's own latency is never part of the hold: it delays only the picture, it adds
+  several seconds of ingest, transcode and player buffer, and nothing inside an encoder can measure
+  it.
 
 ### Moderation, including before a message is ever shown
 
-A moderator deleting a message inside the delay window means the deletion reaches LiveCast **while
-the message is still waiting**. Your game never sees it at all. Every external overlay put that
+With the hold on, a moderator deleting a message inside the delay window means the deletion reaches
+LiveCast **while the message is still waiting**. Your game never sees it at all. Every external overlay put that
 message on screen the moment it was posted and can only take it down afterwards.
 
 A message already shown can still be withdrawn: **On Chat Message Deleted** carries its id so you can
@@ -587,9 +628,10 @@ voters whose message has waited out the delay. An overlay of your own that draws
 
 **Held messages and events are dropped, not flushed.** If the connection drops, if Twitch asks the
 client to move, if you disconnect, if a moderator clears the whole chat (`/clear`), or if the delay
-ends because the broadcast did, whatever was waiting is discarded. This is deliberate: those lines
-exist to appear beside a particular picture, and by the time chat is back their moment has passed.
-Releasing them would dump a minute of backlog into the game at once, which reads as a bug.
+ends because the broadcast did, whatever was waiting is discarded. This is deliberate. While the
+connection is down no deletion or ban can reach them, so part of their moderation window is blind,
+and once the broadcast has ended there is nothing left for them to wait for. Releasing them could
+dump a minute of backlog into the game at once, which reads as a bug.
 
 A dropped connection reconnects on its own, backing off 1, 2, 4, 8 and then 12 seconds, and keeps
 trying for as long as chat is connected — **there is no attempt limit**. Every failed attempt raises
@@ -734,11 +776,11 @@ message takes its vote with it, and a viewer banned or timed out loses theirs; *
 Withdrawn** says whose. The viewer may vote again after one deleted message, since a deletion is not
 a ban. Once the result is in, it stands: a ban after that does not change it.
 
-**Votes are counted the moment they arrive; names are not shown until the delay is over.** The
-broadcast delay keeps a deleted message from ever being *shown* (see *Moderation*). A vote is counted
-at once — the bars move — but the default overlay waits the broadcast delay before it draws "Dave
-voted monster", exactly as long as Dave's message waits, and a ban or deletion inside that time
-means the name is never drawn. **On Vote Ballot** itself fires at once: a game drawing names from it
+**Votes are counted the moment they arrive; names are not shown until the delay is over.** With the
+chat hold on, the broadcast delay keeps a deleted message from ever being *shown* (see *Moderation*).
+A vote is counted at once — the bars move — but the default overlay waits the broadcast delay before
+it draws "Dave voted monster", whether or not the chat hold is on, and a ban or deletion inside that
+time means the name is never drawn. **On Vote Ballot** itself fires at once: a game drawing names from it
 should wait the same way. A **result** names only voters whose message had waited out the delay by
 the time the result came — see *Winning Voter Names* below.
 
@@ -822,9 +864,9 @@ broken one.
 **Winning Voter Names** lists who voted for the winning option, earliest first, up to ten — after
 **Picked At Random**, whoever among the few voters had chosen the option drawn — **but only voters
 whose message had already waited out the broadcast delay when the result came.** A name is chat text,
-and chat text reaches the picture only after the delay so a moderator can remove it first; a name in a
-result keeps that rule. Usually it costs nothing, because the earliest voters are the ones named and
-they have waited longest. With a delay as long as the window or longer, few or no names can qualify,
+and it is held for the delay so a moderator can remove it first, whether or not the chat hold is
+on; a name in a result keeps that rule. Usually it costs nothing, because the earliest voters are the
+ones named and they have waited longest. With a delay as long as the window or longer, few or no names can qualify,
 and the result says "thanks" to nobody — the votes still count. A ban after the result does not
 change it. Use them: the
 monster can wear the first voter's name, the medkit can say who sent it. On a small channel that
