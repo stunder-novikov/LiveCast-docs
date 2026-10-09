@@ -1,6 +1,6 @@
 ---
 title: LiveCast
-description: Broadcast an Unreal Engine game to Twitch, YouTube or any RTMP or RTMPS server, from inside the engine.
+description: Broadcast an Unreal Engine game to Twitch, YouTube or any RTMP or RTMPS server — from inside the engine, without OBS.
 ---
 # LiveCast
 
@@ -78,7 +78,7 @@ leaves your game, the service fans it out.
 |---|---|
 | Twitch | `rtmp://live.twitch.tv/app`, or encrypted `rtmps://live.twitch.tv:443/app` |
 | YouTube | `rtmp://a.rtmp.youtube.com/live2`, or encrypted `rtmps://a.rtmps.youtube.com:443/live2` |
-| Kick | `rtmps://…` — shown in your account; Kick accepts only RTMPS |
+| Kick | `rtmps://…` — shown in your account; Kick accepts only RTMPS (not yet verified live — see below) |
 | Restream / Castr / others | shown in your account |
 
 Plain RTMP to Twitch and YouTube is tested, not assumed: a full broadcast runs to each. RTMPS is
@@ -144,7 +144,7 @@ including 10-bit HDR ones.
 2. Restart the editor. Enable **LiveCast** under *Edit → Plugins → Media* if it is not on already.
 3. That is all. Nothing about your project has to change for LiveCast to work.
 
-### Upgrading from 1.3.1
+### Upgrading from 1.3
 
 - **Sync Chat To Stream Delay is now Chat Hold**, a choice of three: *Same as the broadcast delay*
   (what the checkbox did, and still the default), *Fixed moderation window* (new: **Chat Hold
@@ -152,68 +152,77 @@ including 10-bit HDR ones.
   nothing behaves differently until you choose. A Blueprint or C++ class that used **Sync Chat To
   Stream Delay** (`bSyncChatToStreamDelay`) will not compile until that use is replaced — read
   **Chat Hold**, or call **Get Chat Hold Seconds**. See *Holding chat for moderation*.
+- **Same as the broadcast delay holds chat for at most 600 seconds.** 1.3 held it for the whole delay,
+  however long; a delay over ten minutes now holds chat for ten.
 - **Voters' names wait the chat hold when it is longer than the broadcast delay.** That happens only
-  with a fixed window longer than the delay; otherwise names wait exactly as before.
+  with a fixed window longer than the delay; otherwise names wait exactly as before. A hold that grows
+  while a vote runs — a broadcast started, a delay set — holds the names as long.
 - **New nodes**: **Get Chat Hold Seconds**, **Get Voter Name Hold Seconds** and **Get Measured
   Viewer Latency**.
 - **Vote results gain First Answer Seconds**, and each vote with five or more of your viewers logs
-  one more line: the floor your quickest viewers' latency puts under **Viewer Latency Seconds**. See
-  *Chat votes*.
+  one more line: a rough check of **Viewer Latency Seconds** from your quicker viewers, reaction
+  included. See *Chat votes*.
 - **`LiveCast.Settings` prints the chat hold** on a line of its own.
 - **In `DefaultGame.ini`** the setting is `ChatHold=BroadcastDelay`, `Fixed` or `Off`, with
   `ChatHoldSeconds=10`. An old `bSyncChatToStreamDelay=False` is still read, as Off, until `ChatHold`
-  is written; an unknown `ChatHold` value is ignored with a warning. Project Settings → **Import** of
-  a settings file exported from 1.3.1 does not carry the old checkbox over: set Chat Hold by hand
-  after importing one.
-- **Log lines changed**: the vote's "opened" line ends with "names after N s"; "the delay ended:
+  is written, and read as 1.3 read it (a value that is not 1/0, True/False or Yes/No leaves the hold
+  on); an unknown `ChatHold` value is ignored with a warning, and so is a Chat Hold Seconds above 300,
+  which holds for 300. Project Settings → **Import** of a settings file exported from 1.3 does not
+  carry the old checkbox over: set Chat Hold by hand after importing one.
+- **Log lines changed**: the vote's "opened" line now gives "names after N s" (followed, when chat is
+  not connected, by "CHAT IS NOT CONNECTED"); "the delay ended:
   dropped …" is now "the chat hold fell to zero: dropped …"; a Fixed hold with Chat Hold Seconds at
   0 warns at load (the editor may print it twice; it loads the settings twice). An unknown `ChatHold`
   value's warning names the choice used instead.
-- **Stream keys are masked by the address's structure.** In 1.3.1 `rtmp://host/app/KEY/` was
-  printed whole, in the log and in the self-test's reports; if you shared logs or reports from such a
-  URL, regenerate the key. Now only the scheme, host, port and the first part of the path are kept
-  (`rtmp://host/app/***`) — a nested application shows only its first part, a path of one part is
-  hidden whole — and a query (`?…`), anything after a space, and a user name and password before the
-  host are masked too. **`LiveCast.Settings`** now masks the ingest URL it prints, and
-  **`LiveCast.TestUrl`** prints the key as `<key>`.
-- **Make Stream URL drops a key's own leading and trailing slashes**, and warns when the Ingest URL
-  has more than one part after the host — usually a stream key already in it.
+- **Stream keys are masked by the address's structure.** Every version before 1.4 printed
+  `rtmp://host/app/KEY/` — the key with a slash after it — whole, in the log and in the self-test's
+  reports; if you shared logs or reports from such a URL, regenerate the key. Now only the scheme,
+  host, port and the first part of the path are kept (`rtmp://host/app/***`) — a nested application
+  shows only its first part, a path of one part is hidden whole, and a "host" that does not look like
+  one (it may be a key) is hidden too — and a query (`?…`), anything after a space, and a user name and
+  password before the host are masked as well. **`LiveCast.Settings`** now masks the ingest URL it
+  prints, and **`LiveCast.TestUrl`** prints the key as `<key>` (the ingest you type it is shown as
+  typed — the console has echoed it already).
+- **Make Stream URL drops a key's own leading and trailing slashes**, refuses an Ingest URL with no
+  host (`rtmp:///`, which made the key the host), and warns when the Ingest URL has more than one part
+  after the host — usually a stream key already in it.
 - **An ingest that refuses the application path on the first connection** now reports **Connection
-  Refused** ("…refused the application in the URL…"); 1.3.1 reported it as **Connection Lost**.
-- **An `rtmps://` address that cannot be used as written** — a bad port, no `/app/key` — is refused
-  at once with **Connection Refused** ("Not started: …") rather than tried.
-- **`rtmps://` addresses broadcast over TLS**, where 1.3.1 refused them. `rtmp://` is unchanged. See
-  *Where you can broadcast*. **Packaged games now carry the engine's certificate bundle** (about
-  230 KB), staged by the plugin — and the game's other HTTPS, its HTTP requests and WebSockets, then
-  trusts that bundle too, alongside the Windows root store.
-- **Spaces around an address are ignored**: ` rtmp://…`, which 1.3.1 refused with **Connection
+  Refused** ("…refused the application in the URL…"); 1.3 reported it as **Connection Lost**.
+- **An `rtmps://` address that cannot be used as written** — a bad port, no `/app/key`, a user name or
+  a space in the host — is refused at once with **Connection Refused** ("Not started: …") rather than
+  tried.
+- **`rtmps://` addresses broadcast over TLS**, where 1.3 refused them. `rtmp://` is unchanged. See
+  *Where you can broadcast*. A failure on this machine rather than at the ingest — LiveCast's own
+  link, a socket, no trusted root certificates at all — reports **Connection Lost**.
+- **Packaged games now carry the engine's certificate bundle** (`cacert.pem`, about 230 KB, Mozilla's
+  CA list under MPL 2.0), staged by the plugin — and the game's other HTTPS, its HTTP requests and
+  WebSockets, then trusts that bundle too, alongside the Windows root store. Credit it as you credit
+  the engine's other third-party components; see `THIRD_PARTY_LICENSES.md`.
+- **Spaces around an address are ignored**: ` rtmp://…`, which 1.3 refused with **Connection
   Refused**, now broadcasts. The wrong-scheme message now names `rtmp:// or rtmps://`.
-- **The self-test's report** masks the key as `***` (it was `<stream key hidden>`), and has new
-  verdicts: `ENCODER UNAVAILABLE` (it used to blame the ingest), `LOCAL FAILURE`, `TLS REFUSED` and
-  `TLS OK, BUT NOT AN RTMP INGEST`.
+- **The self-test's report** masks the key as `***` (it was `<stream key hidden>`), does not quote an
+  address it cannot read as one, and has new verdicts: `ENCODER UNAVAILABLE` (it used to blame the
+  ingest), `LOCAL FAILURE`, `TLS REFUSED`, `TLS OK, BUT NOT AN RTMP INGEST`, and `STREAM ENDED EARLY`
+  for a run stopped by hand before it connected (it used to say `INGEST UNREACHABLE`).
 - **A Stop during a reconnect** returns at once instead of after the current wait (up to 15 s), and no
   longer logs "reconnecting" or "giving up".
-- **Start Stream while your own broadcast runs** is refused with **Already Streaming** and leaves the
-  broadcast as it was. 1.3.1 applied the new delay, then failed with **Encoder Unavailable** and cleared
-  the delay of the broadcast still running.
-- **First Answer Seconds is -1** for a vote during which the broadcast delay changed or a broadcast
-  started or stopped, as well as for too few timed voters and a cancelled vote.
+- **Start Stream while a broadcast runs** is refused with **Already Streaming** and leaves the
+  broadcast as it was — your own, or one started from the console or `LiveCast.SelfTest` (stop that
+  first). 1.3 applied the new delay, then failed with **Encoder Unavailable** and cleared the delay of
+  the broadcast still running.
+- **First Answer Seconds is -1** for a vote during which the broadcast delay changed, a broadcast
+  started, stopped or reconnected, the uplink was behind as the question went out, or chat moved to
+  another channel — as well as for too few timed voters and a cancelled vote.
 - **A chat hold too long for Max Queued Chat Messages** at the channel's rate now says so in the log
-  (*Load*).
-
-### Upgrading from 1.3
-
-1.3.1 changes documentation and wording only. No behaviour, setting, Blueprint node or event
-changed. What you will notice: the tooltips of **Sync Chat To Stream Delay**, **On Chat Event** and the
-vote overlay's **Latest Ballot**, the plugin's description in the Plugins window, the example chat
-overlay's status line — "held N s for moderation" where it said "held N s to match the stream" — and
-one log line, for held messages dropped on a disconnect.
-
-Earlier versions explained the chat hold as keeping chat "in step with the picture". That was wrong:
-the hold gives moderators the delay to remove a line before it is drawn into the broadcast, and costs
-your game one delay of reaction time. If you left **Sync Chat To Stream Delay** on to make reactions
-line up with the picture, read *Holding chat for moderation* — for fast reactions to commands, set
-**Chat Hold** to Off (1.4; in 1.3.1, turn the checkbox off).
+  (*Load*), and a full queue shows the lines that have already waited out their hold before it pushes
+  anything out.
+- **Wording.** Earlier versions explained the chat hold as keeping chat "in step with the picture".
+  That was wrong: the hold gives moderators the delay to remove a line before it is drawn into the
+  broadcast, and costs your game one delay of reaction time. If you left **Sync Chat To Stream Delay**
+  on to make reactions line up with the picture, read *Holding chat for moderation* — for fast
+  reactions to commands, set **Chat Hold** to Off. The example chat overlay's status line now says
+  "held N s for moderation" where it said "held N s to match the stream", and the tooltips of **On
+  Chat Event** and the vote overlay's **Latest Ballot** changed with it.
 
 ### Upgrading from 1.2
 
@@ -285,7 +294,7 @@ voters' names wait:
 | **Chat Hold** | Same as the broadcast delay | How long each chat message and channel event waits before your game sees it, so moderators can remove a line before it is drawn into the broadcast: the broadcast delay, a **Fixed moderation window**, or **Off**. Every second of it is a second of reaction time; see *Holding chat for moderation*. |
 | **Chat Hold Seconds** | 10 | 0–300. The window when Chat Hold is Fixed. |
 | **Max Queued Chat Messages** | 500 | 16–10000. How many messages and events may wait out the hold; past that the oldest are discarded and counted. Keep it above messages per second × the hold, or a busy channel shows nothing — see *Load*. |
-| **Viewer Latency Seconds** | 6 | 0–60. How far behind live viewers watch, not counting the broadcast delay — the streaming site's own latency. Votes stay open this much longer so viewers get their whole window. Your votes put a floor under it — see **First Answer Seconds** in *Chat votes*. |
+| **Viewer Latency Seconds** | 6 | 0–60. How far behind live viewers watch, not counting the broadcast delay — the streaming site's own latency. Votes stay open this much longer so viewers get their whole window. Your votes give a rough check of it — see **First Answer Seconds** in *Chat votes*. |
 
 > **If you write `DefaultGame.ini` by hand — a build script, a per-platform override — put the ingest
 > URL in quotes:**
@@ -431,7 +440,7 @@ Stream With Key** does.
 | **Get Vote State** | The running vote for an overlay to draw: options, tallies, voters, the countdown to show, and whether chat is connected at all. |
 | **Get Last Vote Result** | How the most recent vote ended — what **On Vote Ended** carried. Vote Id 0 before the first one. |
 | **Get Voter Name Hold Seconds** | How long a voter's name from **On Vote Ballot** should wait before your own overlay draws it: the chat hold or the broadcast delay, whichever is longer. The default vote overlay waits this long. |
-| **Get Measured Viewer Latency** (→ Seconds, Votes Measured) | The floor this session's votes put under **Viewer Latency Seconds**: the middle of the last five votes' **First Answer Seconds** (of fewer until five have run). False, Seconds -1, until a vote with five or more of your own viewers has ended. See *Chat votes*. |
+| **Get Measured Viewer Latency** (→ Seconds, Votes Measured) | This session's votes' rough check of **Viewer Latency Seconds**: the middle of the last five votes' **First Answer Seconds** (of fewer until five have run). False, Seconds -1, until a vote with five or more of your own viewers has ended. See *Chat votes*. |
 
 ### Stream settings
 
@@ -466,24 +475,28 @@ Stream With Key** does.
 
 Events are delivered on the game thread, so it is safe to touch UI directly from them.
 
-**On Stream Started deliberately waits for the ingest.** It does not fire when *Start Stream*
-returns — the handshake happens on a background thread, and a wrong stream key must never look
-like a live broadcast.
+**On Stream Started waits for the ingest to accept the stream.** It does not fire when *Start
+Stream* returns — the handshake happens on a background thread. It is not proof that the key is
+right, though: some ingests, Twitch among them, accept the stream with any key and cut the session a
+moment later. LiveCast then retries briefly and reports **Connection Refused** ("check the key") within
+a few seconds, after up to three short sessions — so a game should not treat On Stream Started alone
+as "the audience can see us".
 
 ### Error values
 
 | Value | Meaning |
 |---|---|
 | **Connection Refused** | The first connection failed: the URL could not be parsed or used, the ingest could not be reached, it refused the application in the URL or the stream — usually a wrong or expired key — or, for `rtmps://`, TLS refused or the address is not an RTMP ingest. The message says which. |
-| **Connection Lost** | The connection dropped and could not be restored within the retry budget — or, for `rtmps://`, LiveCast's own link on this machine failed ("could not be set up on this machine"): nothing was sent, try again. |
+| **Connection Lost** | The connection dropped and could not be restored within the retry budget — or, for `rtmps://`, something on this machine failed: LiveCast's own link, a socket, or no trusted root certificates at all ("could not be set up on this machine" on a first connection, "…failed on this machine" while restoring one). Usually worth trying again; the message says when it is not. |
 | **Encoder Unavailable** | No hardware encoder accepted the requested configuration. |
 | **No Game World** | Streaming was requested while no game world was running. |
-| **Already Streaming** | A broadcast is already running — your own (call Stop Stream first; the running one is left untouched), or another game instance's. LiveCast captures one at a time per process, which you meet when testing a multiplayer game in the editor with more than one client: each has its own subsystem and they share one capture. |
+| **Already Streaming** | A broadcast is already running — your own (call Stop Stream first; the running one is left untouched), one started from the console or `LiveCast.SelfTest` (stop that first), or another game instance's. LiveCast captures one at a time per process, which you meet when testing a multiplayer game in the editor with more than one client: each has its own subsystem and they share one capture. |
 
 A failure *before* the first successful connection reports **Connection Refused** — that is the
 "check your key" case. A failure *after* it reports **Connection Lost**, and so does an `rtmps://`
-failure on this machine itself ("could not be set up on this machine"), first attempt or not: trying
-again is the advice for both.
+failure on this machine itself, first attempt or not — "could not be set up on this machine" on the
+first, "the attempt to restore it failed on this machine" on a reconnect: trying again is the advice
+for both, except when the message says no root certificate is loaded at all.
 
 ### Chat error values
 
@@ -668,7 +681,7 @@ hold is timed on the wall clock, so a game whose frame time the engine clamps do
 
 | Chat Hold | Holds for | Use it when |
 |---|---|---|
-| **Same as the broadcast delay** (default) | `Delay Seconds` — nothing while there is no delay | You want what 1.1–1.3.1 did. It follows the broadcast; see below. |
+| **Same as the broadcast delay** (default) | `Delay Seconds`, up to 600 s — nothing while there is no delay | You want what 1.1–1.3 did. It follows the broadcast; see below. |
 | **Fixed moderation window** | **Chat Hold Seconds** (default 10), delay or no delay | Your game draws viewers' words or names. Works when LiveCast is not the one broadcasting, too — a game captured by OBS. |
 | **Off** | nothing | Your game reacts to commands and speed matters. |
 
@@ -793,7 +806,7 @@ lost to a full queue, not what was discarded when a connection dropped.
 **It must be larger than messages per second times the hold.** A line pushed out before it has waited
 its hold is never shown, so a queue too small for the hold shows **nothing at all** while the channel
 is that busy: at five messages a second, a 120-second hold needs more than 600. The log says so when
-it happens ("too small for a … s chat hold"). With the default 10-second window, 500 lasts up to fifty
+it happens ("pushed out of the hold queue before their … s chat hold is up"). With the default 10-second window, 500 lasts up to fifty
 messages a second.
 
 That limit is also what bounds the worst frame *inside LiveCast*. Measured on 1.2, which parses
@@ -964,39 +977,44 @@ second — with the default latency and no delay about seven seconds, with a 30-
 cuts off viewers who vote in their last seconds; too high makes the result arrive a little later and
 also accepts votes typed after a viewer's countdown showed zero.
 
-**Your votes put a floor under it.** A vote reaches your broadcast one delay after it opens —
+**Your votes give a rough check of it.** A vote reaches your broadcast one delay after it opens —
 LiveCast knows that moment exactly — and your viewers see it the site's latency later. So when the
-first answers arrive says how far behind your *quickest* viewers watch. Every result carries **First
-Answer Seconds**: how long after the vote reached the broadcast the first answers came, taken where the
-first fifth of voters had answered but never earlier than the third voter, so one viewer who typed the
-keyword early does not read as no latency at all. After each vote the log says it next to the setting
-(one line in the log):
+first answers arrive says roughly how far behind your quicker viewers watch. Every result carries
+**First Answer Seconds**: how long after the vote reached the broadcast the answer that ends the first
+fifth of voters came — the fourth of twenty — but never earlier than the third voter, so one viewer who
+typed the keyword early does not read as no latency at all. On a vote of five to fourteen voters that
+is the third answer, and at five it is the middle one. After each vote the log says it next to the
+setting (one line in the log):
 
 ```
 [vote] #3: the first answers came 9.4 s after the vote reached the broadcast (the quickest viewers'
-latency plus reaction); over 3 vote(s) 9.1 s, Viewer Latency Seconds is 6.0 - further above the
-setting than reaction time explains: raise it, above this number
+latency plus reaction); over 3 vote(s) 9.1 s, Viewer Latency Seconds is 6.0 - well above the setting,
+so it may be too low: time your slowest viewers (a phone, a TV) and raise it to cover them. This
+number includes reaction time and is not the value to set
 ```
 
 **Get Measured Viewer Latency** gives the middle of this session's last five such votes, or of fewer
 until five have run; it is forgotten when chat joins another channel and when the game closes, and
-LiveCast never changes the setting itself. The log advises raising the setting only when the number is
-more than two seconds above it — the reaction a correct setting still reads as. Within those two
-seconds it says to time your slowest viewers before changing anything, and below the setting, to keep
-the setting above the number. Know what the number is:
+LiveCast never changes the setting itself. The log says the setting may be too low only when the
+number is more than two seconds above it; within those two seconds it says to time your slowest
+viewers before changing anything, and below the setting, to keep the setting above the number. The
+two seconds are a guess at a quick viewer's reaction, not a measurement. Know what the number is:
 
-- **A floor, not the answer.** It is the latency of your quickest viewers — low-latency players, fast
-  typists — plus their reaction. Slower viewers, on phones, TVs or the normal player, watch later
-  still, and **Viewer Latency Seconds** has to cover them. A setting well below this number — by more
-  than a reaction takes — is very likely too low; a setting above it is not thereby enough. The number
-  holds the quickest viewers' reaction as well, so a right setting may sit a couple of seconds under
-  it; the slowest viewers decide the setting, and only a clock measures them.
+- **A check, not the answer.** It is the latency of quicker viewers — low-latency players, fast
+  typists — PLUS their reaction: reading the question, deciding, typing. Slower viewers, on phones,
+  TVs or the normal player, watch later still, and **Viewer Latency Seconds** has to cover them. And
+  because the reaction is in it — on a small vote the reaction of an ordinary viewer, not a quick one —
+  the number can sit several seconds above the latency itself. A setting far below it is likely too
+  low; a setting above it is not thereby enough. The slowest viewers decide the setting, and only a
+  clock measures them.
 - **Only from your own channel, and only with five or more voters.** Fewer, and the result says -1
   and nothing is logged. Shared Chat partners' viewers are left out — they watch a different stream.
   So are votes read late after the game froze, and cancelled votes, which keep only the quickest; a
   game running below about four frames a second reads every vote as after a freeze and measures
-  nothing. A vote during which the broadcast delay changed, or a broadcast started or stopped, is
-  not timed at all — it reached viewers at a moment nobody recorded.
+  nothing. A vote during which the broadcast delay changed, a broadcast started, stopped or
+  reconnected, the uplink was more than half a second behind as the question went out, or chat moved
+  to another channel, is not timed at all — it reached viewers at a moment nobody recorded. Nor is one
+  while lines typed at the console or a replay are going into chat (development builds).
 - **Counted from when the vote reached the broadcast** — its opening plus the broadcast delay. If
   your game shows the question later than it calls Start
   Vote, the measurement includes that gap; a question that takes long to read adds reading time.
@@ -1203,8 +1221,11 @@ Your stream key is a password, and log files end up in bug reports. In every add
 writes — the log, the self-test's reports, `LiveCast.Settings` — it keeps only what names the server:
 the scheme, the host, the port and the first part of the path, as in `rtmps://live.twitch.tv:443/app/***`.
 Everything after that first part is masked, so a key pasted twice is masked twice; so is a path of
-one part, which may be the key itself, anything after a `?`, a `#` or a space, and a user name or
-password written before the host. `LiveCast.TestUrl` shows the key it joins as `<key>`.
+one part, which may be the key itself, anything after a `?`, a `#` or a space, a user name or
+password written before the host, and a "host" that does not look like one — a key that ended up
+where the host belongs. The self-test does not quote an address it cannot read as one at all.
+`LiveCast.TestUrl` shows the key it joins as `<key>`, and the ingest you give it as you typed it:
+showing the join is its whole point, and the console has already echoed that line (below).
 
 Note that Unreal's *own* console echo does print whatever you type, and so does its record of the
 command line at startup. LiveCast cannot mask those — they are written before the plugin sees
@@ -1409,15 +1430,18 @@ early on a refusal. If the message begins "The encrypted (rtmps://) connection t
 TLS refused before anything was sent, and the rest of the message says why: a certificate this
 machine does not trust, a host name the certificate does not name, or a handshake that never
 completed — usually a port that serves plain RTMP, or a network that blocks TLS, where `rtmp://` may
-work. "No root certificate loaded here vouches for the authority that issued it" is most often a root
+work. "…no root certificate loaded here vouches for the authority that issued it" is most often a root
 missing on this machine rather than an attack: a game packaged with LiveCast 1.4 carries the engine's
-bundle, so check the build first. Rarely the cause is this machine itself — "the engine has no
-trusted root certificates loaded". "answered over TLS with a valid certificate, but it is not an RTMP
+bundle, so check the build first. "answered over TLS with a valid certificate, but it is not an RTMP
 ingest" means the address is a working HTTPS server and the wrong place: check the host and port.
 
 **On Stream Error → Connection Lost, "could not be set up on this machine".** For `rtmps://` only:
-LiveCast's own link between the RTMP library and the TLS connection failed, or Windows would not give
-it a socket or a thread. Nothing was sent; try again. The self-test calls this `LOCAL FAILURE`.
+LiveCast's own link between the RTMP library and the TLS connection failed, Windows would not give it
+a socket or a thread, or the engine has no trusted root certificates loaded at all — a project that
+switched the Windows root store off and packaged no bundle; that last one will not pass on a retry,
+the others usually do. On a first connection nothing was sent. On a reconnect the message reads "the
+attempt to restore it failed on this machine" instead, and the key had been sent all along. The
+self-test calls the first `LOCAL FAILURE` and the second `CONNECTION LOST`.
 
 **Viewers who join late see nothing.** Not an issue here — LiveCast repeats the H.264 parameter
 sets before every keyframe so a decoder can start at any point. If you see this, the ingest is
@@ -1444,7 +1468,8 @@ in other PIE modes the only window holding the game is the editor frame itself.
   is not, because the window stops rendering.
 - H.264 video (NVENC on NVIDIA, AMF on AMD) and AAC audio. AMD is verified on one card — see the
   requirements above.
-- RTMP and RTMPS — no SRT, no WebRTC.
+- RTMP and RTMPS — no SRT, no WebRTC. IPv4 only: the ingest must be reachable over IPv4, and an IPv6
+  address in the URL is refused.
 - The encoded resolution is fixed for the duration of a broadcast.
 - One broadcast at a time.
 - Chat is Twitch only, read-only and anonymous. No sending, no follows, no channel-point redemptions,

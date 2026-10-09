@@ -242,6 +242,12 @@ License 2.0 (https://www.mozilla.org/MPL/2.0/); the engine's own packaging copie
 uses that instead. Once in the build, the bundle is what all of the game's HTTPS
 trusts, alongside the Windows root store.
 
+What it means for your game: a game packaged with LiveCast 1.4 contains this file
+under MPL 2.0, where before it did so only if the project set `n.VerifyPeer`. The
+file is unmodified plain text and is itself its source form. List it with the
+engine's other third-party components wherever your game credits them, naming the
+licence and where it can be read.
+
 ---
 
 ## Example content — no third party involved
