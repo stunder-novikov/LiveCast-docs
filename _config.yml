@@ -5,7 +5,7 @@
 # "View on GitHub" button removed; because the theme is pinned, keeping a copy costs no updates.
 
 title: LiveCast
-description: Broadcast an Unreal Engine game to Twitch, YouTube or any RTMP server — from inside the engine, without OBS.
+description: Broadcast an Unreal Engine game to Twitch, YouTube or any RTMP or RTMPS server — from inside the engine, without OBS.
 
 remote_theme: pages-themes/cayman@v0.2.0
 
